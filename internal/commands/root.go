@@ -132,6 +132,24 @@ func NewRoot() *cli.Command {
 				},
 			},
 			{
+				Name:  "ls",
+				Usage: "list workspace names (one per line; used by agent bootstrap scripts)",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					o, err := newOps()
+					if err != nil {
+						return err
+					}
+					wss, err := o.Client.ListWorkspaces()
+					if err != nil {
+						return err
+					}
+					for _, ws := range wss {
+						fmt.Println(ws.Name)
+					}
+					return nil
+				},
+			},
+			{
 				Name:  "status",
 				Usage: "show all leases and this replica's local state",
 				Action: func(ctx context.Context, c *cli.Command) error {

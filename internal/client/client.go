@@ -91,6 +91,12 @@ func (c *Client) CreateWorkspace(name, defaultBranch string) (protocol.Workspace
 	return out, err
 }
 
+func (c *Client) ListWorkspaces() ([]protocol.WorkspaceInfo, error) {
+	var out []protocol.WorkspaceInfo
+	err := c.do("GET", "/api/workspaces", nil, &out)
+	return out, err
+}
+
 func (c *Client) GetWorkspace(name string) (protocol.WorkspaceInfo, error) {
 	var out protocol.WorkspaceInfo
 	err := c.do("GET", "/api/workspaces/"+name, nil, &out)
