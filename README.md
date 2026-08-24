@@ -65,6 +65,22 @@ On the server/agent side, configure with env vars instead of `setup`:
 Agent-harness integration is just the CLI: call `zync take` when a session
 goes active on a machine and `zync handoff` when it goes background.
 
+## opencode integration
+
+`integrations/opencode/zync.js` is an opencode plugin over that CLI surface:
+
+```sh
+mkdir -p ~/.config/opencode/plugins
+ln -s "$(pwd)/integrations/opencode/zync.js" ~/.config/opencode/plugins/zync.js
+```
+
+Before any mutating tool call it ensures the lease is held (taking it
+automatically if free, blocking the edit with the holder's name if not), and
+with `ZYNC_AUTO_HANDOFF=1` set (recommended for server-side agents only) it
+flushes and releases on `session.idle`. Repos not enrolled in zync are
+ignored. The same plugin runs on every replica; the laptop/server transition
+falls out of the lease protocol.
+
 ## Development
 
 ```sh
