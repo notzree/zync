@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/urfave/cli/v3"
@@ -31,8 +32,12 @@ func cwd() string {
 }
 
 func NewRoot() *cli.Command {
+	name := "zync"
+	if len(os.Args) > 0 && os.Args[0] != "" {
+		name = filepath.Base(os.Args[0])
+	}
 	return &cli.Command{
-		Name:  "zync",
+		Name:  name,
 		Usage: "git-based codebase handoffs between your machines and your homeserver",
 		Commands: []*cli.Command{
 			{

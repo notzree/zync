@@ -45,6 +45,7 @@ imagePullSecret or make the package public in GitHub package settings.
 
 ```sh
 go install github.com/notzree/zync/cmd/zync@latest
+go install github.com/notzree/zync/cmd/zx@latest   # short alias, same CLI
 
 zync setup --hub http://zync.homelab:8080 --token <token> --name laptop
 
