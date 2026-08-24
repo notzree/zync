@@ -7,8 +7,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/zync-hub ./cmd/zync-hub \
  && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/zync ./cmd/zync
 
 FROM alpine:3.22
-# git serves the repos; curl is used by the pre-receive fencing hook
-RUN apk add --no-cache git curl ca-certificates
+# git-daemon provides git-http-backend (split out of git on alpine);
+# curl is used by the pre-receive fencing hook
+RUN apk add --no-cache git git-daemon curl ca-certificates
 COPY --from=build /out/zync-hub /usr/local/bin/zync-hub
 COPY --from=build /out/zync /usr/local/bin/zync
 ENV ZYNC_DATA_DIR=/data
