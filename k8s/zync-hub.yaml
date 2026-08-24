@@ -1,0 +1,102 @@
+# zync hub for k3s.
+#
+# Before applying:
+#   kubectl create namespace zync
+#   kubectl -n zync create secret generic zync-hub \
+#     --from-literal=token="$(openssl rand -hex 24)"
+#
+# If the ghcr.io package is private, also create an imagePullSecret and
+# reference it under spec.template.spec.imagePullSecrets.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zync-data
+  namespace: zync
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path # k3s default
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zync-hub
+  namespace: zync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single writer over the PVC + sqlite
+  selector:
+    matchLabels:
+      app: zync-hub
+  template:
+    metadata:
+      labels:
+        app: zync-hub
+    spec:
+      containers:
+        - name: hub
+          image: ghcr.io/notzree/zync-hub:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ZYNC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: zync-hub
+                  key: token
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: zync-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zync-hub
+  namespace: zync
+spec:
+  selector:
+    app: zync-hub
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# Optional: expose via Traefik (k3s default ingress). Adjust the host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zync-hub
+  namespace: zync
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: zync.homelab # <- change to your hostname
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: zync-hub
+                port:
+                  number: 8080

@@ -1,0 +1,5 @@
+/zync
+/zync-hub
+/dist/
+*.db
+.DS_Store
