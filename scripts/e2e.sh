@@ -92,8 +92,13 @@ echo "laptop took lease back; commits and dirty state intact"
 laptop release
 echo 'rogue edit' >> main.go
 if laptop take 2>/dev/null; then fail "divergence should block take"; fi
-git checkout -q main.go 2>/dev/null || true
 echo "divergence correctly detected and blocked"
+
+# --- force take adopts the diverged local state, nothing lost -----------------
+laptop take --force
+grep -q 'rogue edit' main.go || fail "force take should keep local edits"
+laptop release
+echo "force take adopted local state and flushed it"
 
 echo
 echo "ALL E2E CHECKS PASSED"

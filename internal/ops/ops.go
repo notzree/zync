@@ -161,9 +161,26 @@ func (o *Ops) Take(dir, branch string, force bool) error {
 	}
 
 	// Enforce sync-before-write: the worktree must be exactly what zync
-	// last recorded before we overwrite it with the new snapshot.
-	if _, err := verifyWorktree(repo, state); err != nil {
-		return err
+	// last recorded before we overwrite it with the new snapshot. With
+	// --force, a diverged local state is adopted as the new truth instead
+	// (snapshotted first, so nothing can be lost).
+	_, verifyErr := verifyWorktree(repo, state)
+	if verifyErr != nil && (!force || !errors.Is(verifyErr, ErrDiverged)) {
+		return verifyErr
+	}
+
+	// adoptLocal makes the current local state authoritative: the next flush
+	// pushes it to the hub (which fails safely if histories truly diverged).
+	adoptLocal := func() error {
+		if branch != cur {
+			return fmt.Errorf("cannot adopt diverged local state for %q while on %q", branch, cur)
+		}
+		snap, tree, err := repo.Snapshot(branch)
+		if err != nil {
+			return err
+		}
+		state.Worktree = &cliconf.WorktreeState{Branch: branch, Tree: tree, Commit: snap}
+		return nil
 	}
 
 	resp, err := o.Client.Take(state.Workspace, branch, force)
@@ -171,17 +188,29 @@ func (o *Ops) Take(dir, branch string, force bool) error {
 		return err
 	}
 
-	if resp.SnapshotCommit == "" {
+	switch {
+	case verifyErr != nil:
+		// Forced take over local divergence: local wins.
+		if err := adoptLocal(); err != nil {
+			return err
+		}
+	case resp.SnapshotCommit == "":
 		// Fresh lease: no flushed state exists anywhere, nothing to sync.
 		if branch != cur {
 			return fmt.Errorf("lease on %q granted, but it has no synced state on the hub; check the branch out manually and re-run `zync take`", branch)
 		}
-	} else {
+	default:
 		if err := repo.FetchBranch(branch); err != nil {
 			return err
 		}
 		if repo.BranchExists(branch) && !repo.IsAncestor(branch, resp.BaseCommit) {
-			return fmt.Errorf("%w: local branch %q has commits the hub does not know about; reconcile manually", ErrDiverged, branch)
+			if !force {
+				return fmt.Errorf("%w: local branch %q has commits the hub does not know about; reconcile manually or take --force to make local state authoritative", ErrDiverged, branch)
+			}
+			if err := adoptLocal(); err != nil {
+				return err
+			}
+			break
 		}
 		norm := ""
 		if state.Worktree != nil {
