@@ -17,6 +17,14 @@ git config --global user.name "${ZYNC_REPLICA}"
 git config --global user.email "${ZYNC_REPLICA}@zync.local"
 git config --global --add safe.directory '*'
 
+# The hub may be restarting alongside us (e.g. a coordinated rollout); wait
+# for it so the boot-time registration and workspace sync don't no-op.
+echo "zync-agent: waiting for hub at ${ZYNC_HUB_URL}"
+for i in $(seq 1 60); do
+  curl -sf "${ZYNC_HUB_URL}/healthz" >/dev/null 2>&1 && break
+  sleep 2
+done
+
 echo "zync-agent: syncing workspaces from ${ZYNC_HUB_URL}"
 for ws in $(zx ls); do
   if [ ! -d "$WORKSPACES_DIR/$ws" ]; then
