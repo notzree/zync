@@ -132,6 +132,41 @@ func NewRoot() *cli.Command {
 				},
 			},
 			{
+				Name:  "agent",
+				Usage: "manage known agent servers (used by the TUI to open opencode)",
+				Commands: []*cli.Command{
+					{
+						Name:      "set",
+						Usage:     "register a replica's opencode server URL",
+						ArgsUsage: "<replica> <opencode-url>",
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "workspaces-dir", Value: "/workspaces", Usage: "workspace clone root on that agent"},
+						},
+						Action: func(ctx context.Context, c *cli.Command) error {
+							if c.Args().Len() != 2 {
+								return fmt.Errorf("usage: zync agent set <replica> <opencode-url>")
+							}
+							g, err := cliconf.LoadGlobal()
+							if err != nil {
+								return err
+							}
+							if g.Agents == nil {
+								g.Agents = map[string]cliconf.AgentConfig{}
+							}
+							g.Agents[c.Args().Get(0)] = cliconf.AgentConfig{
+								OpencodeURL:   c.Args().Get(1),
+								WorkspacesDir: c.String("workspaces-dir"),
+							}
+							if err := cliconf.SaveGlobal(g); err != nil {
+								return err
+							}
+							fmt.Printf("agent %q -> %s (workspaces in %s)\n", c.Args().Get(0), c.Args().Get(1), c.String("workspaces-dir"))
+							return nil
+						},
+					},
+				},
+			},
+			{
 				Name:  "ls",
 				Usage: "list workspace names (one per line; used by agent bootstrap scripts)",
 				Action: func(ctx context.Context, c *cli.Command) error {

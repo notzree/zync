@@ -14,6 +14,15 @@ type Global struct {
 	HubURL  string `json:"hub_url"`
 	Token   string `json:"token"`
 	Replica string `json:"replica"`
+	// Agents maps a replica name to its opencode server, so the TUI can
+	// launch `opencode attach` against the right machine.
+	Agents map[string]AgentConfig `json:"agents,omitempty"`
+}
+
+type AgentConfig struct {
+	OpencodeURL string `json:"opencode_url"`
+	// WorkspacesDir is where that agent materializes workspace clones.
+	WorkspacesDir string `json:"workspaces_dir"`
 }
 
 func ConfigDir() string {

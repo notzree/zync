@@ -4,8 +4,13 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
+	"path"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,6 +37,8 @@ type actionMsg struct {
 	verb string
 	err  error
 }
+
+type execDoneMsg struct{ err error }
 
 type tickMsg time.Time
 
@@ -92,6 +99,39 @@ func (m model) selectedLease() *protocol.LeaseInfo {
 	return &m.leases[i]
 }
 
+// openCommand decides how to open the selected lease in opencode: attach to
+// the holder's opencode server when we know it, otherwise open the local
+// checkout, otherwise attach to any configured agent.
+func (m model) openCommand(lease protocol.LeaseInfo) (*exec.Cmd, string, error) {
+	agents := m.o.Global.Agents
+	attach := func(name string, ag cliconf.AgentConfig) (*exec.Cmd, string) {
+		dir := path.Join(ag.WorkspacesDir, lease.Workspace)
+		argv := []string{"opencode", "attach", ag.OpencodeURL, "--dir", dir}
+		return exec.Command(argv[0], argv[1:]...), strings.Join(argv, " ")
+	}
+	if lease.State == "held" {
+		if ag, ok := agents[lease.Holder]; ok {
+			cmd, s := attach(lease.Holder, ag)
+			return cmd, s, nil
+		}
+	}
+	if dir, ok := m.registry[lease.Workspace]; ok {
+		cmd := exec.Command("opencode")
+		cmd.Dir = dir
+		return cmd, "cd " + dir + " && opencode", nil
+	}
+	names := make([]string, 0, len(agents))
+	for name := range agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > 0 {
+		cmd, s := attach(names[0], agents[names[0]])
+		return cmd, s, nil
+	}
+	return nil, "", fmt.Errorf("no local checkout of %q and no agents configured (zync agent set <replica> <url>)", lease.Workspace)
+}
+
 func (m model) runAction(verb string, lease protocol.LeaseInfo, force bool) tea.Cmd {
 	dir, ok := m.registry[lease.Workspace]
 	if !ok {
@@ -139,6 +179,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isErr = false
 				return m, m.runAction("handoff", *l, false)
 			}
+		case "o":
+			if l := m.selectedLease(); l != nil {
+				cmd, human, err := m.openCommand(*l)
+				if err != nil {
+					m.status, m.isErr = err.Error(), true
+					return m, nil
+				}
+				m.status, m.isErr = "opencode closed - back in zync", false
+				_ = human
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return execDoneMsg{err} })
+			}
+		case "y":
+			if l := m.selectedLease(); l != nil {
+				_, human, err := m.openCommand(*l)
+				if err != nil {
+					m.status, m.isErr = err.Error(), true
+					return m, nil
+				}
+				if err := clipboard.WriteAll(human); err != nil {
+					m.status, m.isErr = "clipboard error: "+err.Error(), true
+				} else {
+					m.status, m.isErr = "copied: "+human, false
+				}
+				return m, nil
+			}
 		}
 	case tickMsg:
 		if m.busy {
@@ -172,6 +237,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status, m.isErr = msg.verb+" succeeded", false
 		}
 		return m, m.fetchLeases()
+	case execDoneMsg:
+		if msg.err != nil {
+			m.status, m.isErr = "opencode exited: "+msg.err.Error(), true
+		}
+		return m, m.fetchLeases()
 	}
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
@@ -186,5 +256,5 @@ func (m model) View() string {
 	return titleStyle.Render(fmt.Sprintf("zync - replica %q", m.o.Client.Replica())) + "\n" +
 		baseStyle.Render(m.table.View()) + "\n" +
 		status + "\n" +
-		helpStyle.Render("t take - T force-take - h handoff - r refresh - q quit  (* = this replica)")
+		helpStyle.Render("t take - T force-take - h handoff - o open in opencode - y copy open cmd - r refresh - q quit  (* = this replica)")
 }
