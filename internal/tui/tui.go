@@ -29,8 +29,9 @@ var (
 )
 
 type leasesMsg struct {
-	leases []protocol.LeaseInfo
-	err    error
+	leases   []protocol.LeaseInfo
+	replicas []protocol.ReplicaInfo
+	err      error
 }
 
 type actionMsg struct {
@@ -47,6 +48,7 @@ type model struct {
 	registry cliconf.Registry
 	table    table.Model
 	leases   []protocol.LeaseInfo
+	replicas []protocol.ReplicaInfo
 	status   string
 	isErr    bool
 	busy     bool
@@ -79,7 +81,11 @@ func Run(o *ops.Ops) error {
 func (m model) fetchLeases() tea.Cmd {
 	return func() tea.Msg {
 		leases, err := m.o.Client.ListLeases()
-		return leasesMsg{leases: leases, err: err}
+		if err != nil {
+			return leasesMsg{err: err}
+		}
+		replicas, err := m.o.Client.ListReplicas()
+		return leasesMsg{leases: leases, replicas: replicas, err: err}
 	}
 }
 
@@ -99,37 +105,52 @@ func (m model) selectedLease() *protocol.LeaseInfo {
 	return &m.leases[i]
 }
 
-// openCommand decides how to open the selected lease in opencode: attach to
-// the holder's opencode server when we know it, otherwise open the local
-// checkout, otherwise attach to any configured agent.
+// openCommand opens the selected lease in opencode, following the lease:
+//  1. held by this replica            -> local opencode in the local checkout
+//  2. held by a replica advertising   -> attach to the holder's server
+//     an opencode server
+//  3. released, local checkout exists -> local opencode (take happens on
+//     demand via the plugin when the agent edits)
+//  4. otherwise                       -> attach to any advertising replica
 func (m model) openCommand(lease protocol.LeaseInfo) (*exec.Cmd, string, error) {
-	agents := m.o.Global.Agents
-	attach := func(name string, ag cliconf.AgentConfig) (*exec.Cmd, string) {
-		dir := path.Join(ag.WorkspacesDir, lease.Workspace)
-		argv := []string{"opencode", "attach", ag.OpencodeURL, "--dir", dir}
+	attach := func(url, workspacesDir string) (*exec.Cmd, string) {
+		dir := path.Join(workspacesDir, lease.Workspace)
+		argv := []string{"opencode", "attach", url, "--dir", dir}
 		return exec.Command(argv[0], argv[1:]...), strings.Join(argv, " ")
 	}
+	local := func(dir string) (*exec.Cmd, string) {
+		cmd := exec.Command("opencode")
+		cmd.Dir = dir
+		return cmd, "cd " + dir + " && opencode"
+	}
+	localDir, hasLocal := m.registry[lease.Workspace]
+
 	if lease.State == "held" {
-		if ag, ok := agents[lease.Holder]; ok {
-			cmd, s := attach(lease.Holder, ag)
+		if lease.Holder == m.o.Client.Replica() && hasLocal {
+			cmd, s := local(localDir)
+			return cmd, s, nil
+		}
+		if lease.HolderOpencodeURL != "" {
+			cmd, s := attach(lease.HolderOpencodeURL, lease.HolderWorkspacesDir)
 			return cmd, s, nil
 		}
 	}
-	if dir, ok := m.registry[lease.Workspace]; ok {
-		cmd := exec.Command("opencode")
-		cmd.Dir = dir
-		return cmd, "cd " + dir + " && opencode", nil
-	}
-	names := make([]string, 0, len(agents))
-	for name := range agents {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	if len(names) > 0 {
-		cmd, s := attach(names[0], agents[names[0]])
+	if hasLocal {
+		cmd, s := local(localDir)
 		return cmd, s, nil
 	}
-	return nil, "", fmt.Errorf("no local checkout of %q and no agents configured (zync agent set <replica> <url>)", lease.Workspace)
+	candidates := make([]protocol.ReplicaInfo, 0)
+	for _, r := range m.replicas {
+		if r.OpencodeURL != "" {
+			candidates = append(candidates, r)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
+	if len(candidates) > 0 {
+		cmd, s := attach(candidates[0].OpencodeURL, candidates[0].WorkspacesDir)
+		return cmd, s, nil
+	}
+	return nil, "", fmt.Errorf("no local checkout of %q and no replica advertises an opencode server", lease.Workspace)
 }
 
 func (m model) runAction(verb string, lease protocol.LeaseInfo, force bool) tea.Cmd {
@@ -216,11 +237,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.leases = msg.leases
+		m.replicas = msg.replicas
 		rows := make([]table.Row, len(msg.leases))
 		for i, l := range msg.leases {
-			holder := l.Holder
-			if holder == m.o.Client.Replica() {
-				holder = holder + " *"
+			holder := "-"
+			if l.State == "held" {
+				holder = l.Holder
+				if holder == m.o.Client.Replica() {
+					holder = holder + " *"
+				}
+			} else if l.Holder != "" {
+				holder = "- (last: " + l.Holder + ")"
 			}
 			rows[i] = table.Row{l.Workspace, l.Branch, l.State, holder, fmt.Sprint(l.Generation), l.UpdatedAt}
 		}

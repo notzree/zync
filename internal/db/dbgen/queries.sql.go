@@ -188,7 +188,8 @@ func (q *Queries) GrantLease(ctx context.Context, arg GrantLeaseParams) (Lease, 
 }
 
 const listAllLeases = `-- name: ListAllLeases :many
-SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name, r.name AS holder_name
+SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name, r.name AS holder_name,
+       r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
 FROM leases l
 JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN replicas r ON r.id = l.holder_replica_id
@@ -196,18 +197,20 @@ ORDER BY w.name, l.branch
 `
 
 type ListAllLeasesRow struct {
-	ID              int64          `json:"id"`
-	WorkspaceID     int64          `json:"workspace_id"`
-	Branch          string         `json:"branch"`
-	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
-	Generation      int64          `json:"generation"`
-	State           string         `json:"state"`
-	SnapshotCommit  sql.NullString `json:"snapshot_commit"`
-	BaseCommit      sql.NullString `json:"base_commit"`
-	PushToken       sql.NullString `json:"push_token"`
-	UpdatedAt       string         `json:"updated_at"`
-	WorkspaceName   string         `json:"workspace_name"`
-	HolderName      sql.NullString `json:"holder_name"`
+	ID                  int64          `json:"id"`
+	WorkspaceID         int64          `json:"workspace_id"`
+	Branch              string         `json:"branch"`
+	HolderReplicaID     sql.NullInt64  `json:"holder_replica_id"`
+	Generation          int64          `json:"generation"`
+	State               string         `json:"state"`
+	SnapshotCommit      sql.NullString `json:"snapshot_commit"`
+	BaseCommit          sql.NullString `json:"base_commit"`
+	PushToken           sql.NullString `json:"push_token"`
+	UpdatedAt           string         `json:"updated_at"`
+	WorkspaceName       string         `json:"workspace_name"`
+	HolderName          sql.NullString `json:"holder_name"`
+	HolderOpencodeUrl   sql.NullString `json:"holder_opencode_url"`
+	HolderWorkspacesDir sql.NullString `json:"holder_workspaces_dir"`
 }
 
 func (q *Queries) ListAllLeases(ctx context.Context) ([]ListAllLeasesRow, error) {
@@ -232,6 +235,8 @@ func (q *Queries) ListAllLeases(ctx context.Context) ([]ListAllLeasesRow, error)
 			&i.UpdatedAt,
 			&i.WorkspaceName,
 			&i.HolderName,
+			&i.HolderOpencodeUrl,
+			&i.HolderWorkspacesDir,
 		); err != nil {
 			return nil, err
 		}
@@ -247,7 +252,8 @@ func (q *Queries) ListAllLeases(ctx context.Context) ([]ListAllLeasesRow, error)
 }
 
 const listLeasesByWorkspace = `-- name: ListLeasesByWorkspace :many
-SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name, r.name AS holder_name
+SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name, r.name AS holder_name,
+       r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
 FROM leases l
 JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN replicas r ON r.id = l.holder_replica_id
@@ -256,18 +262,20 @@ ORDER BY l.branch
 `
 
 type ListLeasesByWorkspaceRow struct {
-	ID              int64          `json:"id"`
-	WorkspaceID     int64          `json:"workspace_id"`
-	Branch          string         `json:"branch"`
-	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
-	Generation      int64          `json:"generation"`
-	State           string         `json:"state"`
-	SnapshotCommit  sql.NullString `json:"snapshot_commit"`
-	BaseCommit      sql.NullString `json:"base_commit"`
-	PushToken       sql.NullString `json:"push_token"`
-	UpdatedAt       string         `json:"updated_at"`
-	WorkspaceName   string         `json:"workspace_name"`
-	HolderName      sql.NullString `json:"holder_name"`
+	ID                  int64          `json:"id"`
+	WorkspaceID         int64          `json:"workspace_id"`
+	Branch              string         `json:"branch"`
+	HolderReplicaID     sql.NullInt64  `json:"holder_replica_id"`
+	Generation          int64          `json:"generation"`
+	State               string         `json:"state"`
+	SnapshotCommit      sql.NullString `json:"snapshot_commit"`
+	BaseCommit          sql.NullString `json:"base_commit"`
+	PushToken           sql.NullString `json:"push_token"`
+	UpdatedAt           string         `json:"updated_at"`
+	WorkspaceName       string         `json:"workspace_name"`
+	HolderName          sql.NullString `json:"holder_name"`
+	HolderOpencodeUrl   sql.NullString `json:"holder_opencode_url"`
+	HolderWorkspacesDir sql.NullString `json:"holder_workspaces_dir"`
 }
 
 func (q *Queries) ListLeasesByWorkspace(ctx context.Context, workspaceID int64) ([]ListLeasesByWorkspaceRow, error) {
@@ -292,6 +300,42 @@ func (q *Queries) ListLeasesByWorkspace(ctx context.Context, workspaceID int64) 
 			&i.UpdatedAt,
 			&i.WorkspaceName,
 			&i.HolderName,
+			&i.HolderOpencodeUrl,
+			&i.HolderWorkspacesDir,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReplicas = `-- name: ListReplicas :many
+SELECT id, name, created_at, last_seen_at, opencode_url, workspaces_dir FROM replicas ORDER BY name
+`
+
+func (q *Queries) ListReplicas(ctx context.Context) ([]Replica, error) {
+	rows, err := q.db.QueryContext(ctx, listReplicas)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Replica
+	for rows.Next() {
+		var i Replica
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+			&i.OpencodeUrl,
+			&i.WorkspacesDir,
 		); err != nil {
 			return nil, err
 		}
@@ -374,20 +418,31 @@ func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) (Lea
 }
 
 const upsertReplica = `-- name: UpsertReplica :one
-INSERT INTO replicas (name, last_seen_at)
-VALUES (?, datetime('now'))
-ON CONFLICT (name) DO UPDATE SET last_seen_at = datetime('now')
-RETURNING id, name, created_at, last_seen_at
+INSERT INTO replicas (name, last_seen_at, opencode_url, workspaces_dir)
+VALUES (?, datetime('now'), ?, ?)
+ON CONFLICT (name) DO UPDATE SET
+    last_seen_at = datetime('now'),
+    opencode_url = CASE WHEN excluded.opencode_url != '' THEN excluded.opencode_url ELSE replicas.opencode_url END,
+    workspaces_dir = CASE WHEN excluded.workspaces_dir != '' THEN excluded.workspaces_dir ELSE replicas.workspaces_dir END
+RETURNING id, name, created_at, last_seen_at, opencode_url, workspaces_dir
 `
 
-func (q *Queries) UpsertReplica(ctx context.Context, name string) (Replica, error) {
-	row := q.db.QueryRowContext(ctx, upsertReplica, name)
+type UpsertReplicaParams struct {
+	Name          string `json:"name"`
+	OpencodeUrl   string `json:"opencode_url"`
+	WorkspacesDir string `json:"workspaces_dir"`
+}
+
+func (q *Queries) UpsertReplica(ctx context.Context, arg UpsertReplicaParams) (Replica, error) {
+	row := q.db.QueryRowContext(ctx, upsertReplica, arg.Name, arg.OpencodeUrl, arg.WorkspacesDir)
 	var i Replica
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.CreatedAt,
 		&i.LastSeenAt,
+		&i.OpencodeUrl,
+		&i.WorkspacesDir,
 	)
 	return i, err
 }

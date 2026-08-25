@@ -22,10 +22,12 @@ type Lease struct {
 }
 
 type Replica struct {
-	ID         int64          `json:"id"`
-	Name       string         `json:"name"`
-	CreatedAt  string         `json:"created_at"`
-	LastSeenAt sql.NullString `json:"last_seen_at"`
+	ID            int64          `json:"id"`
+	Name          string         `json:"name"`
+	CreatedAt     string         `json:"created_at"`
+	LastSeenAt    sql.NullString `json:"last_seen_at"`
+	OpencodeUrl   string         `json:"opencode_url"`
+	WorkspacesDir string         `json:"workspaces_dir"`
 }
 
 type Workspace struct {

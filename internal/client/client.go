@@ -21,18 +21,22 @@ var ErrConflict = errors.New("conflict")
 var ErrNotFound = errors.New("not found")
 
 type Client struct {
-	hubURL  string
-	token   string
-	replica string
-	http    *http.Client
+	hubURL        string
+	token         string
+	replica       string
+	opencodeURL   string
+	workspacesDir string
+	http          *http.Client
 }
 
-func New(hubURL, token, replica string) *Client {
+func New(hubURL, token, replica, opencodeURL, workspacesDir string) *Client {
 	return &Client{
-		hubURL:  strings.TrimRight(hubURL, "/"),
-		token:   token,
-		replica: replica,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		hubURL:        strings.TrimRight(hubURL, "/"),
+		token:         token,
+		replica:       replica,
+		opencodeURL:   opencodeURL,
+		workspacesDir: workspacesDir,
+		http:          &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -55,6 +59,12 @@ func (c *Client) do(method, path string, body, out any) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set(protocol.ReplicaHeader, c.replica)
+	if c.opencodeURL != "" {
+		req.Header.Set(protocol.OpencodeURLHeader, c.opencodeURL)
+	}
+	if c.workspacesDir != "" {
+		req.Header.Set(protocol.WorkspacesDirHeader, c.workspacesDir)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -100,6 +110,12 @@ func (c *Client) ListWorkspaces() ([]protocol.WorkspaceInfo, error) {
 func (c *Client) GetWorkspace(name string) (protocol.WorkspaceInfo, error) {
 	var out protocol.WorkspaceInfo
 	err := c.do("GET", "/api/workspaces/"+name, nil, &out)
+	return out, err
+}
+
+func (c *Client) ListReplicas() ([]protocol.ReplicaInfo, error) {
+	var out []protocol.ReplicaInfo
+	err := c.do("GET", "/api/replicas", nil, &out)
 	return out, err
 }
 

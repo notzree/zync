@@ -23,7 +23,7 @@ type Ops struct {
 }
 
 func New(g cliconf.Global) *Ops {
-	return &Ops{Global: g, Client: client.New(g.HubURL, g.Token, g.Replica)}
+	return &Ops{Global: g, Client: client.New(g.HubURL, g.Token, g.Replica, g.OpencodeURL, g.WorkspacesDir)}
 }
 
 func (o *Ops) openRepo(dir string) (*gitx.Repo, *cliconf.RepoState, error) {

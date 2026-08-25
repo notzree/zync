@@ -14,15 +14,13 @@ type Global struct {
 	HubURL  string `json:"hub_url"`
 	Token   string `json:"token"`
 	Replica string `json:"replica"`
-	// Agents maps a replica name to its opencode server, so the TUI can
-	// launch `opencode attach` against the right machine.
-	Agents map[string]AgentConfig `json:"agents,omitempty"`
-}
-
-type AgentConfig struct {
-	OpencodeURL string `json:"opencode_url"`
-	// WorkspacesDir is where that agent materializes workspace clones.
-	WorkspacesDir string `json:"workspaces_dir"`
+	// OpencodeURL is this replica's own opencode server, advertised to the
+	// hub so other machines can attach to it. Empty for replicas that don't
+	// run one (typical laptops).
+	OpencodeURL string `json:"opencode_url,omitempty"`
+	// WorkspacesDir is where this replica materializes workspace clones,
+	// advertised alongside OpencodeURL.
+	WorkspacesDir string `json:"workspaces_dir,omitempty"`
 }
 
 func ConfigDir() string {
@@ -51,6 +49,12 @@ func LoadGlobal() (Global, error) {
 	}
 	if v := os.Getenv("ZYNC_REPLICA"); v != "" {
 		g.Replica = v
+	}
+	if v := os.Getenv("ZYNC_OPENCODE_URL"); v != "" {
+		g.OpencodeURL = v
+	}
+	if v := os.Getenv("ZYNC_WORKSPACES_DIR"); v != "" {
+		g.WorkspacesDir = v
 	}
 	if g.HubURL == "" || g.Token == "" || g.Replica == "" {
 		return g, errors.New("zync is not configured: run `zync setup --hub <url> --token <token> --name <replica>` (or set ZYNC_HUB_URL, ZYNC_TOKEN, ZYNC_REPLICA)")

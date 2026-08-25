@@ -10,10 +10,16 @@ SELECT * FROM workspaces WHERE name = ?;
 SELECT * FROM workspaces ORDER BY name;
 
 -- name: UpsertReplica :one
-INSERT INTO replicas (name, last_seen_at)
-VALUES (?, datetime('now'))
-ON CONFLICT (name) DO UPDATE SET last_seen_at = datetime('now')
+INSERT INTO replicas (name, last_seen_at, opencode_url, workspaces_dir)
+VALUES (?, datetime('now'), ?, ?)
+ON CONFLICT (name) DO UPDATE SET
+    last_seen_at = datetime('now'),
+    opencode_url = CASE WHEN excluded.opencode_url != '' THEN excluded.opencode_url ELSE replicas.opencode_url END,
+    workspaces_dir = CASE WHEN excluded.workspaces_dir != '' THEN excluded.workspaces_dir ELSE replicas.workspaces_dir END
 RETURNING *;
+
+-- name: ListReplicas :many
+SELECT * FROM replicas ORDER BY name;
 
 -- name: GetLease :one
 SELECT * FROM leases WHERE workspace_id = ? AND branch = ?;
@@ -50,14 +56,16 @@ JOIN workspaces w ON w.id = l.workspace_id
 WHERE l.push_token = ? AND l.state = 'held';
 
 -- name: ListAllLeases :many
-SELECT l.*, w.name AS workspace_name, r.name AS holder_name
+SELECT l.*, w.name AS workspace_name, r.name AS holder_name,
+       r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
 FROM leases l
 JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN replicas r ON r.id = l.holder_replica_id
 ORDER BY w.name, l.branch;
 
 -- name: ListLeasesByWorkspace :many
-SELECT l.*, w.name AS workspace_name, r.name AS holder_name
+SELECT l.*, w.name AS workspace_name, r.name AS holder_name,
+       r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
 FROM leases l
 JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN replicas r ON r.id = l.holder_replica_id

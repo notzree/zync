@@ -38,12 +38,35 @@ func newPushToken() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *LeaseService) EnsureReplica(ctx context.Context, name string) error {
+// EnsureReplica registers/refreshes a replica. Non-empty opencodeURL and
+// workspacesDir update the stored advertisement; empty values preserve it.
+func (s *LeaseService) EnsureReplica(ctx context.Context, name, opencodeURL, workspacesDir string) error {
 	if name == "" {
 		return nil
 	}
-	_, err := s.q.UpsertReplica(ctx, name)
+	_, err := s.q.UpsertReplica(ctx, dbgen.UpsertReplicaParams{
+		Name:          name,
+		OpencodeUrl:   opencodeURL,
+		WorkspacesDir: workspacesDir,
+	})
 	return err
+}
+
+func (s *LeaseService) ListReplicas(ctx context.Context) ([]protocol.ReplicaInfo, error) {
+	rows, err := s.q.ListReplicas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]protocol.ReplicaInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, protocol.ReplicaInfo{
+			Name:          r.Name,
+			OpencodeURL:   r.OpencodeUrl,
+			WorkspacesDir: r.WorkspacesDir,
+			LastSeenAt:    r.LastSeenAt.String,
+		})
+	}
+	return out, nil
 }
 
 func (s *LeaseService) CreateWorkspace(ctx context.Context, name, defaultBranch string) (protocol.WorkspaceInfo, error) {
@@ -77,7 +100,7 @@ func (s *LeaseService) GetWorkspace(ctx context.Context, name string) (protocol.
 	}
 	info := protocol.WorkspaceInfo{Name: ws.Name, DefaultBranch: ws.DefaultBranch}
 	for _, r := range rows {
-		info.Leases = append(info.Leases, leaseInfo(r.WorkspaceName, r.Branch, r.State, r.HolderName, r.Generation, r.SnapshotCommit, r.BaseCommit, r.UpdatedAt))
+		info.Leases = append(info.Leases, leaseInfo(r.WorkspaceName, r.Branch, r.State, r.HolderName, r.HolderOpencodeUrl, r.HolderWorkspacesDir, r.Generation, r.SnapshotCommit, r.BaseCommit, r.UpdatedAt))
 	}
 	return info, nil
 }
@@ -101,7 +124,7 @@ func (s *LeaseService) Take(ctx context.Context, wsName, branch, replica string,
 	if err != nil {
 		return protocol.TakeResponse{}, fmt.Errorf("%w: workspace %q", ErrNotFound, wsName)
 	}
-	rep, err := q.UpsertReplica(ctx, replica)
+	rep, err := q.UpsertReplica(ctx, dbgen.UpsertReplicaParams{Name: replica})
 	if err != nil {
 		return protocol.TakeResponse{}, err
 	}
@@ -185,7 +208,7 @@ func (s *LeaseService) Release(ctx context.Context, wsName string, req protocol.
 	if err != nil {
 		return fmt.Errorf("%w: workspace %q", ErrNotFound, wsName)
 	}
-	rep, err := q.UpsertReplica(ctx, replica)
+	rep, err := q.UpsertReplica(ctx, dbgen.UpsertReplicaParams{Name: replica})
 	if err != nil {
 		return err
 	}
@@ -250,7 +273,7 @@ func (s *LeaseService) ListLeases(ctx context.Context) ([]protocol.LeaseInfo, er
 	}
 	out := make([]protocol.LeaseInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, leaseInfo(r.WorkspaceName, r.Branch, r.State, r.HolderName, r.Generation, r.SnapshotCommit, r.BaseCommit, r.UpdatedAt))
+		out = append(out, leaseInfo(r.WorkspaceName, r.Branch, r.State, r.HolderName, r.HolderOpencodeUrl, r.HolderWorkspacesDir, r.Generation, r.SnapshotCommit, r.BaseCommit, r.UpdatedAt))
 	}
 	return out, nil
 }
@@ -271,15 +294,17 @@ func (s *LeaseService) ListWorkspaces(ctx context.Context) ([]protocol.Workspace
 	return out, nil
 }
 
-func leaseInfo(workspace, branch, state string, holder sql.NullString, generation int64, snap, base sql.NullString, updatedAt string) protocol.LeaseInfo {
+func leaseInfo(workspace, branch, state string, holder, holderOC, holderWS sql.NullString, generation int64, snap, base sql.NullString, updatedAt string) protocol.LeaseInfo {
 	return protocol.LeaseInfo{
-		Workspace:      workspace,
-		Branch:         branch,
-		State:          state,
-		Holder:         holder.String,
-		Generation:     generation,
-		SnapshotCommit: snap.String,
-		BaseCommit:     base.String,
-		UpdatedAt:      updatedAt,
+		Workspace:           workspace,
+		Branch:              branch,
+		State:               state,
+		Holder:              holder.String,
+		HolderOpencodeURL:   holderOC.String,
+		HolderWorkspacesDir: holderWS.String,
+		Generation:          generation,
+		SnapshotCommit:      snap.String,
+		BaseCommit:          base.String,
+		UpdatedAt:           updatedAt,
 	}
 }

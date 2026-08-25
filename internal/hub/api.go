@@ -104,6 +104,15 @@ func NewMux(cfg Config, svc *LeaseService, git http.Handler) *http.ServeMux {
 		writeJSON(w, http.StatusOK, out)
 	})
 
+	mux.HandleFunc("GET /api/replicas", func(w http.ResponseWriter, r *http.Request) {
+		out, err := svc.ListReplicas(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+
 	mux.HandleFunc("POST /api/workspaces/{ws}/take", func(w http.ResponseWriter, r *http.Request) {
 		var req protocol.TakeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -167,7 +176,10 @@ func WithAuth(cfg Config, svc *LeaseService, next http.Handler) http.Handler {
 			return
 		}
 		if name := r.Header.Get(protocol.ReplicaHeader); name != "" {
-			if err := svc.EnsureReplica(r.Context(), name); err != nil {
+			err := svc.EnsureReplica(r.Context(), name,
+				r.Header.Get(protocol.OpencodeURLHeader),
+				r.Header.Get(protocol.WorkspacesDirHeader))
+			if err != nil {
 				http.Error(w, "replica registration failed", http.StatusInternalServerError)
 				return
 			}
