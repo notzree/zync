@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/notzree/zync/internal/client"
 	"github.com/notzree/zync/internal/cliconf"
@@ -211,9 +212,43 @@ func (o *Ops) Take(dir, branch string, force bool) error {
 	return cliconf.SaveRepoState(repo.GitDir, state)
 }
 
-// Handoff flushes the full working state to the hub and releases the lease.
-// The working tree is left untouched, so the code stays readable here.
-func (o *Ops) Handoff(dir, branch string) error {
+// Release flushes the full working state to the hub and releases the lease
+// back to the pool (nobody holds it). The working tree is left untouched.
+func (o *Ops) Release(dir, branch string) error {
+	return o.flushAndRelease(dir, branch, "")
+}
+
+// Handoff flushes and atomically transfers the lease to target. With an
+// empty target, it auto-selects when exactly one other replica advertises an
+// opencode server.
+func (o *Ops) Handoff(dir, branch, target string) (string, error) {
+	if target == "" {
+		replicas, err := o.Client.ListReplicas()
+		if err != nil {
+			return "", err
+		}
+		var candidates []string
+		for _, r := range replicas {
+			if r.OpencodeURL != "" && r.Name != o.Global.Replica {
+				candidates = append(candidates, r.Name)
+			}
+		}
+		switch len(candidates) {
+		case 1:
+			target = candidates[0]
+		case 0:
+			return "", errors.New("no target: no other replica advertises an opencode server; use --to <replica> or `zync release`")
+		default:
+			return "", fmt.Errorf("ambiguous target, use --to <replica> (candidates: %s)", strings.Join(candidates, ", "))
+		}
+	}
+	if target == o.Global.Replica {
+		return "", errors.New("cannot hand off to yourself; use `zync release`")
+	}
+	return target, o.flushAndRelease(dir, branch, target)
+}
+
+func (o *Ops) flushAndRelease(dir, branch, target string) error {
 	repo, state, err := o.openRepo(dir)
 	if err != nil {
 		return err
@@ -229,7 +264,7 @@ func (o *Ops) Handoff(dir, branch string) error {
 		branch = cur
 	}
 	if branch != cur {
-		return fmt.Errorf("handoff must run from the branch being handed off (on %q, asked for %q)", cur, branch)
+		return fmt.Errorf("release/handoff must run from the branch being flushed (on %q, asked for %q)", cur, branch)
 	}
 	bs := state.Branches[branch]
 	if bs == nil || !bs.Holding {
@@ -249,12 +284,14 @@ func (o *Ops) Handoff(dir, branch string) error {
 		return fmt.Errorf("flush push failed; lease retained: %w", err)
 	}
 
-	// Phase 2: release. Generation fencing rejects stale holders.
+	// Phase 2: release (optionally granting straight to a target replica).
+	// Generation fencing rejects stale holders.
 	err = o.Client.Release(state.Workspace, protocol.ReleaseRequest{
 		Branch:         branch,
 		Generation:     bs.Generation,
 		SnapshotCommit: snapshot,
 		BaseCommit:     head,
+		HandoffTo:      target,
 	})
 	if err != nil {
 		return fmt.Errorf("release failed; lease retained: %w", err)

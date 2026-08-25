@@ -69,6 +69,9 @@ type ReleaseRequest struct {
 	Generation     int64  `json:"generation"`
 	SnapshotCommit string `json:"snapshot_commit"`
 	BaseCommit     string `json:"base_commit"`
+	// HandoffTo, when set, atomically grants the lease to the named replica
+	// instead of releasing it back to the pool (release vs handoff).
+	HandoffTo string `json:"handoff_to,omitempty"`
 }
 
 type ErrorResponse struct {

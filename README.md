@@ -51,11 +51,12 @@ zync setup --hub http://zync.homelab:8080 --token <token> --name laptop
 
 cd ~/code/myproject
 zync init                 # enroll repo; you hold the lease on current branch
-zync handoff              # flush everything + release (mid-edit is fine)
+zync release              # flush everything + release lease back to the hub
+zync handoff [--to X]     # flush + transfer the lease to replica X directly
 zync take [branch]        # acquire lease + sync to latest state
 zync take --force         # break someone else's lease (they get fenced out)
 zync status               # all leases + local state
-zync tui                  # live dashboard: t take, T force-take, h handoff
+zync tui                  # dashboard: t take, h handoff, u release, o open
 zync clone <workspace>    # materialize a workspace on another machine
 ```
 

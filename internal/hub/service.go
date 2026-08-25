@@ -230,6 +230,27 @@ func (s *LeaseService) Release(ctx context.Context, wsName string, req protocol.
 	if err != nil {
 		return err
 	}
+
+	// Directed handoff: grant to the target in the same transaction, so the
+	// lease is never observably free in between. The target syncs on its
+	// next take (idempotent), preserving the fast-forward invariant.
+	if req.HandoffTo != "" {
+		if req.HandoffTo == replica {
+			return fmt.Errorf("%w: cannot hand off to yourself; use release", ErrConflict)
+		}
+		target, err := q.UpsertReplica(ctx, dbgen.UpsertReplicaParams{Name: req.HandoffTo})
+		if err != nil {
+			return err
+		}
+		_, err = q.GrantLease(ctx, dbgen.GrantLeaseParams{
+			HolderReplicaID: sql.NullInt64{Int64: target.ID, Valid: true},
+			PushToken:       sql.NullString{String: newPushToken(), Valid: true},
+			ID:              lease.ID,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

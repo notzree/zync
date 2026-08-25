@@ -44,7 +44,9 @@ export const Zync = async ({ directory, worktree, $ }) => {
     event: async ({ event }) => {
       if (event.type === "session.idle" && autoHandoff) {
         try {
-          await zx("handoff")
+          // Undirected release: the agent is done, the lease goes back to
+          // the pool for whichever machine acts next.
+          await zx("release")
         } catch {
           // Not holding (or flush failed and the lease was retained):
           // nothing to release, or safer to keep it. Never crash the session.

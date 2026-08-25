@@ -43,8 +43,8 @@ git add -A && git commit -qm "initial"
 laptop init --workspace demo
 echo '// wip edit from laptop' >> main.go        # unstaged edit
 echo 'laptop scratch notes' > notes.txt          # untracked file
-laptop handoff
-echo "laptop handed off"
+laptop release
+echo "laptop released"
 
 # --- unauthorized push must be fenced out ------------------------------------
 if git -c http.extraHeader="Authorization: Bearer testtoken" push -q \
@@ -70,14 +70,16 @@ cd "$T/laptop"
 if laptop take 2>/dev/null; then fail "take should conflict while server holds the lease"; fi
 echo "concurrent take correctly refused"
 
-# --- server: do agent-style work (commit + new dirty state), hand back -------
+# --- server: do agent-style work, then DIRECTED handoff back to laptop -------
 cd "$T/server-copy"
 echo 'package agent' > agent.go
 git add -A && git commit -qm "agent work"
 echo '// wip from agent' >> agent.go
-server handoff
+server handoff --to laptop
+server status | grep 'held' | grep 'laptop' >/dev/null || fail "directed handoff should leave laptop as holder"
+echo "directed handoff granted lease straight to laptop"
 
-# --- laptop: take, verify everything came back -------------------------------
+# --- laptop: take (sync the already-granted lease), verify state -------------
 cd "$T/laptop"
 laptop take
 git log --oneline | grep "agent work" >/dev/null || fail "server commit did not come back"
@@ -87,7 +89,7 @@ git status --porcelain | grep 'agent.go' >/dev/null || fail "agent wip should be
 echo "laptop took lease back; commits and dirty state intact"
 
 # --- divergence detection: edit without lease, then try to take --------------
-laptop handoff
+laptop release
 echo 'rogue edit' >> main.go
 if laptop take 2>/dev/null; then fail "divergence should block take"; fi
 git checkout -q main.go 2>/dev/null || true

@@ -116,18 +116,38 @@ func NewRoot() *cli.Command {
 				},
 			},
 			{
-				Name:      "handoff",
-				Usage:     "flush the full working state to the hub and release the lease",
+				Name:      "release",
+				Usage:     "flush the full working state and release the lease back to the hub",
 				ArgsUsage: "[branch]",
 				Action: func(ctx context.Context, c *cli.Command) error {
 					o, err := newOps()
 					if err != nil {
 						return err
 					}
-					if err := o.Handoff(cwd(), c.Args().Get(0)); err != nil {
+					if err := o.Release(cwd(), c.Args().Get(0)); err != nil {
 						return err
 					}
-					fmt.Println("handed off; this replica is now read-only for that branch")
+					fmt.Println("released; the lease is free and this replica is read-only for that branch")
+					return nil
+				},
+			},
+			{
+				Name:      "handoff",
+				Usage:     "flush the full working state and transfer the lease to another replica in one operation",
+				ArgsUsage: "[branch]",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "to", Usage: "target replica (default: the only other replica running an opencode server)"},
+				},
+				Action: func(ctx context.Context, c *cli.Command) error {
+					o, err := newOps()
+					if err != nil {
+						return err
+					}
+					target, err := o.Handoff(cwd(), c.Args().Get(0), c.String("to"))
+					if err != nil {
+						return err
+					}
+					fmt.Printf("handed off; %q now holds the lease and will sync on its next action\n", target)
 					return nil
 				},
 			},

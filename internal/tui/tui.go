@@ -165,8 +165,14 @@ func (m model) runAction(verb string, lease protocol.LeaseInfo, force bool) tea.
 		switch verb {
 		case "take":
 			err = m.o.Take(dir, lease.Branch, force)
+		case "release":
+			err = m.o.Release(dir, lease.Branch)
 		case "handoff":
-			err = m.o.Handoff(dir, lease.Branch)
+			var target string
+			target, err = m.o.Handoff(dir, lease.Branch, "")
+			if err == nil {
+				verb = "handoff to " + target
+			}
 		}
 		return actionMsg{verb: verb, err: err}
 	}
@@ -189,6 +195,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = fmt.Sprintf("taking %s/%s...", l.Workspace, l.Branch)
 				m.isErr = false
 				return m, m.runAction("take", *l, msg.String() == "T")
+			}
+		case "u":
+			if m.busy {
+				return m, nil
+			}
+			if l := m.selectedLease(); l != nil {
+				m.busy = true
+				m.status = fmt.Sprintf("releasing %s/%s...", l.Workspace, l.Branch)
+				m.isErr = false
+				return m, m.runAction("release", *l, false)
 			}
 		case "h":
 			if m.busy {
@@ -283,5 +299,5 @@ func (m model) View() string {
 	return titleStyle.Render(fmt.Sprintf("zync - replica %q", m.o.Client.Replica())) + "\n" +
 		baseStyle.Render(m.table.View()) + "\n" +
 		status + "\n" +
-		helpStyle.Render("t take - T force-take - h handoff - o open in opencode - y copy open cmd - r refresh - q quit  (* = this replica)")
+		helpStyle.Render("t take - T force-take - h handoff - u release - o open in opencode - y copy cmd - r refresh - q quit  (* = this replica)")
 }
