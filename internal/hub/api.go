@@ -269,9 +269,10 @@ func WithAuth(cfg Config, svc *LeaseService, next http.Handler) http.Handler {
 		if name := r.Header.Get(protocol.ReplicaHeader); name != "" {
 			err := svc.EnsureReplica(r.Context(), name,
 				r.Header.Get(protocol.OpencodeURLHeader),
-				r.Header.Get(protocol.WorkspacesDirHeader))
+				r.Header.Get(protocol.WorkspacesDirHeader),
+				r.Header.Get(protocol.ReplicaKindHeader))
 			if err != nil {
-				http.Error(w, "replica registration failed", http.StatusInternalServerError)
+				http.Error(w, "replica registration failed", http.StatusBadRequest)
 				return
 			}
 		}

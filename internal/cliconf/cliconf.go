@@ -14,6 +14,9 @@ type Global struct {
 	HubURL  string `json:"hub_url"`
 	Token   string `json:"token"`
 	Replica string `json:"replica"`
+	// Kind is "local" (human machine, leases never expire) or "remote"
+	// (unattended runtime, leases carry a TTL and are heartbeat-renewed).
+	Kind string `json:"kind,omitempty"`
 	// OpencodeURL is this replica's own opencode server, advertised to the
 	// hub so other machines can attach to it. Empty for replicas that don't
 	// run one (typical laptops).
@@ -55,6 +58,15 @@ func LoadGlobal() (Global, error) {
 	}
 	if v := os.Getenv("ZYNC_WORKSPACES_DIR"); v != "" {
 		g.WorkspacesDir = v
+	}
+	if v := os.Getenv("ZYNC_REPLICA_KIND"); v != "" {
+		g.Kind = v
+	}
+	if g.Kind == "" {
+		g.Kind = "local"
+	}
+	if g.Kind != "local" && g.Kind != "remote" {
+		return g, fmt.Errorf("replica kind must be \"local\" or \"remote\", got %q", g.Kind)
 	}
 	if g.HubURL == "" || g.Token == "" || g.Replica == "" {
 		return g, errors.New("zync is not configured: run `zync setup --hub <url> --token <token> --name <replica>` (or set ZYNC_HUB_URL, ZYNC_TOKEN, ZYNC_REPLICA)")

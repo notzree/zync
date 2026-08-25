@@ -532,7 +532,7 @@ func (q *Queries) ListLeasesByWorkspace(ctx context.Context, workspaceID int64) 
 }
 
 const listReplicas = `-- name: ListReplicas :many
-SELECT id, name, created_at, last_seen_at, opencode_url, workspaces_dir FROM replicas ORDER BY name
+SELECT id, name, created_at, last_seen_at, opencode_url, workspaces_dir, kind FROM replicas ORDER BY name
 `
 
 func (q *Queries) ListReplicas(ctx context.Context) ([]Replica, error) {
@@ -551,6 +551,7 @@ func (q *Queries) ListReplicas(ctx context.Context) ([]Replica, error) {
 			&i.LastSeenAt,
 			&i.OpencodeUrl,
 			&i.WorkspacesDir,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -733,7 +734,7 @@ func (q *Queries) RenewLease(ctx context.Context, arg RenewLeaseParams) (Lease, 
 
 const renewLeaseByPushToken = `-- name: RenewLeaseByPushToken :one
 UPDATE leases
-SET expires_at = ?1
+SET expires_at = CASE WHEN expires_at IS NULL THEN NULL ELSE ?1 END
 WHERE push_token = ?2
   AND state = 'held'
   AND (expires_at IS NULL OR expires_at > ?3)
@@ -792,23 +793,30 @@ func (q *Queries) RestoreWorkspace(ctx context.Context, id int64) (Workspace, er
 }
 
 const upsertReplica = `-- name: UpsertReplica :one
-INSERT INTO replicas (name, last_seen_at, opencode_url, workspaces_dir)
-VALUES (?, datetime('now'), ?, ?)
+INSERT INTO replicas (name, last_seen_at, opencode_url, workspaces_dir, kind)
+VALUES (?, datetime('now'), ?, ?, ?)
 ON CONFLICT (name) DO UPDATE SET
     last_seen_at = datetime('now'),
     opencode_url = CASE WHEN excluded.opencode_url != '' THEN excluded.opencode_url ELSE replicas.opencode_url END,
-    workspaces_dir = CASE WHEN excluded.workspaces_dir != '' THEN excluded.workspaces_dir ELSE replicas.workspaces_dir END
-RETURNING id, name, created_at, last_seen_at, opencode_url, workspaces_dir
+    workspaces_dir = CASE WHEN excluded.workspaces_dir != '' THEN excluded.workspaces_dir ELSE replicas.workspaces_dir END,
+    kind = CASE WHEN excluded.kind != '' THEN excluded.kind ELSE replicas.kind END
+RETURNING id, name, created_at, last_seen_at, opencode_url, workspaces_dir, kind
 `
 
 type UpsertReplicaParams struct {
 	Name          string `json:"name"`
 	OpencodeUrl   string `json:"opencode_url"`
 	WorkspacesDir string `json:"workspaces_dir"`
+	Kind          string `json:"kind"`
 }
 
 func (q *Queries) UpsertReplica(ctx context.Context, arg UpsertReplicaParams) (Replica, error) {
-	row := q.db.QueryRowContext(ctx, upsertReplica, arg.Name, arg.OpencodeUrl, arg.WorkspacesDir)
+	row := q.db.QueryRowContext(ctx, upsertReplica,
+		arg.Name,
+		arg.OpencodeUrl,
+		arg.WorkspacesDir,
+		arg.Kind,
+	)
 	var i Replica
 	err := row.Scan(
 		&i.ID,
@@ -817,6 +825,7 @@ func (q *Queries) UpsertReplica(ctx context.Context, arg UpsertReplicaParams) (R
 		&i.LastSeenAt,
 		&i.OpencodeUrl,
 		&i.WorkspacesDir,
+		&i.Kind,
 	)
 	return i, err
 }

@@ -25,12 +25,13 @@ UPDATE workspaces SET archived_at = ? WHERE id = ? RETURNING *;
 UPDATE workspaces SET archived_at = NULL WHERE id = ? RETURNING *;
 
 -- name: UpsertReplica :one
-INSERT INTO replicas (name, last_seen_at, opencode_url, workspaces_dir)
-VALUES (?, datetime('now'), ?, ?)
+INSERT INTO replicas (name, last_seen_at, opencode_url, workspaces_dir, kind)
+VALUES (?, datetime('now'), ?, ?, ?)
 ON CONFLICT (name) DO UPDATE SET
     last_seen_at = datetime('now'),
     opencode_url = CASE WHEN excluded.opencode_url != '' THEN excluded.opencode_url ELSE replicas.opencode_url END,
-    workspaces_dir = CASE WHEN excluded.workspaces_dir != '' THEN excluded.workspaces_dir ELSE replicas.workspaces_dir END
+    workspaces_dir = CASE WHEN excluded.workspaces_dir != '' THEN excluded.workspaces_dir ELSE replicas.workspaces_dir END,
+    kind = CASE WHEN excluded.kind != '' THEN excluded.kind ELSE replicas.kind END
 RETURNING *;
 
 -- name: ListReplicas :many
@@ -88,7 +89,7 @@ RETURNING *;
 
 -- name: RenewLeaseByPushToken :one
 UPDATE leases
-SET expires_at = sqlc.arg(new_expires_at)
+SET expires_at = CASE WHEN expires_at IS NULL THEN NULL ELSE sqlc.arg(new_expires_at) END
 WHERE push_token = sqlc.arg(push_token)
   AND state = 'held'
   AND (expires_at IS NULL OR expires_at > sqlc.arg(now))

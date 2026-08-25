@@ -25,16 +25,18 @@ type Client struct {
 	hubURL        string
 	token         string
 	replica       string
+	kind          string
 	opencodeURL   string
 	workspacesDir string
 	http          *http.Client
 }
 
-func New(hubURL, token, replica, opencodeURL, workspacesDir string) *Client {
+func New(hubURL, token, replica, kind, opencodeURL, workspacesDir string) *Client {
 	return &Client{
 		hubURL:        strings.TrimRight(hubURL, "/"),
 		token:         token,
 		replica:       replica,
+		kind:          kind,
 		opencodeURL:   opencodeURL,
 		workspacesDir: workspacesDir,
 		http:          &http.Client{Timeout: 30 * time.Second},
@@ -230,6 +232,9 @@ func (c *Client) DownloadExtras(workspace, branch string, bundle protocol.Extras
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set(protocol.ReplicaHeader, c.replica)
+	if c.kind != "" {
+		req.Header.Set(protocol.ReplicaKindHeader, c.kind)
+	}
 	if c.opencodeURL != "" {
 		req.Header.Set(protocol.OpencodeURLHeader, c.opencodeURL)
 	}

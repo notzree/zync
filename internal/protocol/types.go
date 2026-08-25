@@ -19,6 +19,13 @@ const (
 	// WorkspacesDirHeader advertises where the calling replica materializes
 	// workspace clones.
 	WorkspacesDirHeader = "X-Zync-Workspaces-Dir"
+	// ReplicaKindHeader declares whether the calling replica is a human
+	// machine ("local", leases never expire) or an unattended runtime
+	// ("remote", leases carry a TTL and must be heartbeat-renewed).
+	ReplicaKindHeader = "X-Zync-Replica-Kind"
+
+	ReplicaKindLocal  = "local"
+	ReplicaKindRemote = "remote"
 	// PushOptionPrefix is the git push option carrying the lease push token,
 	// validated by the hub's pre-receive hook.
 	PushOptionPrefix = "zync-token="
@@ -57,6 +64,7 @@ type ExtrasBundle struct {
 
 type ReplicaInfo struct {
 	Name          string `json:"name"`
+	Kind          string `json:"kind,omitempty"`
 	OpencodeURL   string `json:"opencode_url,omitempty"`
 	WorkspacesDir string `json:"workspaces_dir,omitempty"`
 	LastSeenAt    string `json:"last_seen_at,omitempty"`

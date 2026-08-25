@@ -115,9 +115,13 @@ func NewRoot() *cli.Command {
 					&cli.StringFlag{Name: "hub", Usage: "hub base URL, e.g. http://zync.homelab:8080", Required: true},
 					&cli.StringFlag{Name: "token", Usage: "hub auth token", Required: true},
 					&cli.StringFlag{Name: "name", Usage: "name of this replica, e.g. laptop", Required: true},
+					&cli.StringFlag{Name: "kind", Value: "local", Usage: "\"local\" (human machine, no lease expiry) or \"remote\" (unattended agent, TTL + heartbeats)"},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
-					g := cliconf.Global{HubURL: c.String("hub"), Token: c.String("token"), Replica: c.String("name")}
+					g := cliconf.Global{HubURL: c.String("hub"), Token: c.String("token"), Replica: c.String("name"), Kind: c.String("kind")}
+					if g.Kind != "local" && g.Kind != "remote" {
+						return fmt.Errorf("--kind must be \"local\" or \"remote\"")
+					}
 					if err := cliconf.SaveGlobal(g); err != nil {
 						return err
 					}

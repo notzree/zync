@@ -38,6 +38,7 @@ type Replica struct {
 	LastSeenAt    sql.NullString `json:"last_seen_at"`
 	OpencodeUrl   string         `json:"opencode_url"`
 	WorkspacesDir string         `json:"workspaces_dir"`
+	Kind          string         `json:"kind"`
 }
 
 type Workspace struct {

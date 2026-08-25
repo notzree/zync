@@ -44,6 +44,12 @@ func TestLeaseExpiryHeartbeatAndTakeover(t *testing.T) {
 	if _, err := svc.CreateWorkspace(ctx, "demo", "main"); err != nil {
 		t.Fatal(err)
 	}
+	// TTLs apply only to remote (unattended) replicas.
+	for _, name := range []string{"laptop", "server"} {
+		if err := svc.EnsureReplica(ctx, name, "", "", protocol.ReplicaKindRemote); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	first, err := svc.Take(ctx, "demo", "main", "laptop", false)
 	if err != nil {
@@ -123,5 +129,19 @@ func TestLeaseExpiryHeartbeatAndTakeover(t *testing.T) {
 	}
 	if _, err := svc.Take(ctx, "demo", "main", "laptop", false); err != nil {
 		t.Fatalf("take restored workspace: %v", err)
+	}
+
+	// Local (human) replicas hold without expiry: even far past the TTL,
+	// their lease can only be broken with force.
+	human, err := svc.Take(ctx, "demo", "main", "human", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if human.ExpiresAt != 0 {
+		t.Fatalf("local replica lease must not expire: %+v", human)
+	}
+	now = now.Add(time.Hour)
+	if _, err := svc.Take(ctx, "demo", "main", "server", false); !errors.Is(err, ErrConflict) {
+		t.Fatalf("local lease was treated as expired: %v", err)
 	}
 }

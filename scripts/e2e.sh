@@ -47,7 +47,7 @@ echo "hub is up"
 
 export ZYNC_HUB_URL="http://127.0.0.1:$PORT" ZYNC_TOKEN=testtoken
 laptop() { ZYNC_REPLICA=laptop ZYNC_CONFIG_DIR="$T/laptop-cfg" "$T/zync" "$@"; }
-server() { ZYNC_REPLICA=server ZYNC_CONFIG_DIR="$T/server-cfg" "$T/zync" "$@"; }
+server() { ZYNC_REPLICA=server ZYNC_REPLICA_KIND=remote ZYNC_CONFIG_DIR="$T/server-cfg" "$T/zync" "$@"; }
 
 # --- laptop: create repo, enroll, dirty it, hand off -------------------------
 mkdir "$T/laptop" && cd "$T/laptop"
@@ -165,6 +165,13 @@ sleep 2
 laptop take
 if server heartbeat 2>/dev/null; then fail "expired holder heartbeat should be fenced"; fi
 echo "heartbeat kept the live holder active and expiry allowed non-force takeover"
+
+# --- local (human) replica leases never expire --------------------------------
+sleep 4
+cd "$T/server-copy"
+if server take 2>/dev/null; then fail "local replica lease must not expire without force"; fi
+cd "$T/laptop"
+echo "local replica lease survived past the TTL without heartbeats"
 
 # --- agent workspace reconciliation discovers later enrollments --------------
 mkdir "$T/later" && cd "$T/later"

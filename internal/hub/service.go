@@ -44,16 +44,21 @@ func newPushToken() string {
 	return hex.EncodeToString(b)
 }
 
-// EnsureReplica registers/refreshes a replica. Non-empty opencodeURL and
-// workspacesDir update the stored advertisement; empty values preserve it.
-func (s *LeaseService) EnsureReplica(ctx context.Context, name, opencodeURL, workspacesDir string) error {
+// EnsureReplica registers/refreshes a replica. Non-empty opencodeURL,
+// workspacesDir, and kind update the stored advertisement; empty values
+// preserve what is already recorded.
+func (s *LeaseService) EnsureReplica(ctx context.Context, name, opencodeURL, workspacesDir, kind string) error {
 	if name == "" {
 		return nil
+	}
+	if kind != "" && kind != protocol.ReplicaKindLocal && kind != protocol.ReplicaKindRemote {
+		return fmt.Errorf("%w: replica kind must be %q or %q", ErrConflict, protocol.ReplicaKindLocal, protocol.ReplicaKindRemote)
 	}
 	_, err := s.q.UpsertReplica(ctx, dbgen.UpsertReplicaParams{
 		Name:          name,
 		OpencodeUrl:   opencodeURL,
 		WorkspacesDir: workspacesDir,
+		Kind:          kind,
 	})
 	return err
 }
@@ -67,6 +72,7 @@ func (s *LeaseService) ListReplicas(ctx context.Context) ([]protocol.ReplicaInfo
 	for _, r := range rows {
 		out = append(out, protocol.ReplicaInfo{
 			Name:          r.Name,
+			Kind:          r.Kind,
 			OpencodeURL:   r.OpencodeUrl,
 			WorkspacesDir: r.WorkspacesDir,
 			LastSeenAt:    r.LastSeenAt.String,
@@ -139,7 +145,7 @@ func (s *LeaseService) Take(ctx context.Context, wsName, branch, replica string,
 		return protocol.TakeResponse{}, err
 	}
 
-	now, expiresAt := s.deadline()
+	now, expiresAt := s.deadlineFor(rep.Kind)
 	lease, err := q.GetLease(ctx, dbgen.GetLeaseParams{WorkspaceID: ws.ID, Branch: branch})
 	if errors.Is(err, sql.ErrNoRows) {
 		created, err := q.CreateHeldLease(ctx, dbgen.CreateHeldLeaseParams{
@@ -308,10 +314,11 @@ func (s *LeaseService) release(ctx context.Context, wsName string, req protocol.
 		if err != nil {
 			return err
 		}
+		_, targetExpiry := s.deadlineFor(target.Kind)
 		_, err = q.GrantLease(ctx, dbgen.GrantLeaseParams{
 			HolderReplicaID: sql.NullInt64{Int64: target.ID, Valid: true},
 			PushToken:       sql.NullString{String: newPushToken(), Valid: true},
-			ExpiresAt:       s.expiryAt(s.now().UnixMilli()),
+			ExpiresAt:       targetExpiry,
 			ID:              lease.ID,
 		})
 		if err != nil {
@@ -438,7 +445,7 @@ func (s *LeaseService) Heartbeat(ctx context.Context, wsName, replica string, re
 	if err != nil {
 		return protocol.HeartbeatResponse{}, fmt.Errorf("%w: no lease for branch %q", ErrNotFound, req.Branch)
 	}
-	now, expiresAt := s.deadline()
+	now, expiresAt := s.deadlineFor(rep.Kind)
 	renewed, err := s.q.RenewLease(ctx, dbgen.RenewLeaseParams{
 		NewExpiresAt:    expiresAt,
 		ID:              lease.ID,
@@ -554,6 +561,16 @@ func leaseInfo(workspace, branch, state string, holder, holderOC, holderWS sql.N
 
 func (s *LeaseService) deadline() (int64, sql.NullInt64) {
 	now := s.now().UnixMilli()
+	return now, s.expiryAt(now)
+}
+
+// deadlineFor applies the lease TTL only to remote (unattended) replicas.
+// Local replicas are humans: their leases never expire underneath them.
+func (s *LeaseService) deadlineFor(kind string) (int64, sql.NullInt64) {
+	now := s.now().UnixMilli()
+	if kind != protocol.ReplicaKindRemote {
+		return now, sql.NullInt64{}
+	}
 	return now, s.expiryAt(now)
 }
 

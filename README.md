@@ -74,7 +74,12 @@ zync clone <workspace>    # materialize a workspace on another machine
 ```
 
 On the server/agent side, configure with env vars instead of `setup`:
-`ZYNC_HUB_URL`, `ZYNC_TOKEN`, `ZYNC_REPLICA`.
+`ZYNC_HUB_URL`, `ZYNC_TOKEN`, `ZYNC_REPLICA`, and `ZYNC_REPLICA_KIND=remote`.
+
+Replica kind decides lease expiry: `local` replicas (human machines, the
+default) hold leases indefinitely; `remote` replicas (unattended agents) get
+TTL leases and must heartbeat, so a crashed agent self-heals instead of
+wedging the workspace.
 
 Agent-harness integration is just the CLI: call `zync take` when a session
 goes active on a machine and `zync handoff` when it goes background.
