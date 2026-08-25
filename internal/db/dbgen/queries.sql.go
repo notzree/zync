@@ -10,10 +10,32 @@ import (
 	"database/sql"
 )
 
+const archiveWorkspace = `-- name: ArchiveWorkspace :one
+UPDATE workspaces SET archived_at = ? WHERE id = ? RETURNING id, name, default_branch, created_at, archived_at
+`
+
+type ArchiveWorkspaceParams struct {
+	ArchivedAt sql.NullInt64 `json:"archived_at"`
+	ID         int64         `json:"id"`
+}
+
+func (q *Queries) ArchiveWorkspace(ctx context.Context, arg ArchiveWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRowContext(ctx, archiveWorkspace, arg.ArchivedAt, arg.ID)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DefaultBranch,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const createHeldLease = `-- name: CreateHeldLease :one
-INSERT INTO leases (workspace_id, branch, holder_replica_id, generation, state, push_token)
-VALUES (?, ?, ?, 1, 'held', ?)
-RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at
+INSERT INTO leases (workspace_id, branch, holder_replica_id, generation, state, push_token, expires_at)
+VALUES (?, ?, ?, 1, 'held', ?, ?)
+RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at, agent_state_digest, agent_state_size, agent_state_format, agent_session_id, agent_state_generation, expires_at, extras_digest, extras_size, extras_format, extras_generation
 `
 
 type CreateHeldLeaseParams struct {
@@ -21,6 +43,7 @@ type CreateHeldLeaseParams struct {
 	Branch          string         `json:"branch"`
 	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
 	PushToken       sql.NullString `json:"push_token"`
+	ExpiresAt       sql.NullInt64  `json:"expires_at"`
 }
 
 func (q *Queries) CreateHeldLease(ctx context.Context, arg CreateHeldLeaseParams) (Lease, error) {
@@ -29,6 +52,7 @@ func (q *Queries) CreateHeldLease(ctx context.Context, arg CreateHeldLeaseParams
 		arg.Branch,
 		arg.HolderReplicaID,
 		arg.PushToken,
+		arg.ExpiresAt,
 	)
 	var i Lease
 	err := row.Scan(
@@ -42,6 +66,16 @@ func (q *Queries) CreateHeldLease(ctx context.Context, arg CreateHeldLeaseParams
 		&i.BaseCommit,
 		&i.PushToken,
 		&i.UpdatedAt,
+		&i.AgentStateDigest,
+		&i.AgentStateSize,
+		&i.AgentStateFormat,
+		&i.AgentSessionID,
+		&i.AgentStateGeneration,
+		&i.ExpiresAt,
+		&i.ExtrasDigest,
+		&i.ExtrasSize,
+		&i.ExtrasFormat,
+		&i.ExtrasGeneration,
 	)
 	return i, err
 }
@@ -49,7 +83,7 @@ func (q *Queries) CreateHeldLease(ctx context.Context, arg CreateHeldLeaseParams
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (name, default_branch)
 VALUES (?, ?)
-RETURNING id, name, default_branch, created_at
+RETURNING id, name, default_branch, created_at, archived_at
 `
 
 type CreateWorkspaceParams struct {
@@ -65,52 +99,13 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.Name,
 		&i.DefaultBranch,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getHeldLeaseByPushToken = `-- name: GetHeldLeaseByPushToken :one
-SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name
-FROM leases l
-JOIN workspaces w ON w.id = l.workspace_id
-WHERE l.push_token = ? AND l.state = 'held'
-`
-
-type GetHeldLeaseByPushTokenRow struct {
-	ID              int64          `json:"id"`
-	WorkspaceID     int64          `json:"workspace_id"`
-	Branch          string         `json:"branch"`
-	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
-	Generation      int64          `json:"generation"`
-	State           string         `json:"state"`
-	SnapshotCommit  sql.NullString `json:"snapshot_commit"`
-	BaseCommit      sql.NullString `json:"base_commit"`
-	PushToken       sql.NullString `json:"push_token"`
-	UpdatedAt       string         `json:"updated_at"`
-	WorkspaceName   string         `json:"workspace_name"`
-}
-
-func (q *Queries) GetHeldLeaseByPushToken(ctx context.Context, pushToken sql.NullString) (GetHeldLeaseByPushTokenRow, error) {
-	row := q.db.QueryRowContext(ctx, getHeldLeaseByPushToken, pushToken)
-	var i GetHeldLeaseByPushTokenRow
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Branch,
-		&i.HolderReplicaID,
-		&i.Generation,
-		&i.State,
-		&i.SnapshotCommit,
-		&i.BaseCommit,
-		&i.PushToken,
-		&i.UpdatedAt,
-		&i.WorkspaceName,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const getLease = `-- name: GetLease :one
-SELECT id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at FROM leases WHERE workspace_id = ? AND branch = ?
+SELECT id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at, agent_state_digest, agent_state_size, agent_state_format, agent_session_id, agent_state_generation, expires_at, extras_digest, extras_size, extras_format, extras_generation FROM leases WHERE workspace_id = ? AND branch = ?
 `
 
 type GetLeaseParams struct {
@@ -132,12 +127,56 @@ func (q *Queries) GetLease(ctx context.Context, arg GetLeaseParams) (Lease, erro
 		&i.BaseCommit,
 		&i.PushToken,
 		&i.UpdatedAt,
+		&i.AgentStateDigest,
+		&i.AgentStateSize,
+		&i.AgentStateFormat,
+		&i.AgentSessionID,
+		&i.AgentStateGeneration,
+		&i.ExpiresAt,
+		&i.ExtrasDigest,
+		&i.ExtrasSize,
+		&i.ExtrasFormat,
+		&i.ExtrasGeneration,
+	)
+	return i, err
+}
+
+const getWorkspaceAnyByName = `-- name: GetWorkspaceAnyByName :one
+SELECT id, name, default_branch, created_at, archived_at FROM workspaces WHERE name = ?
+`
+
+func (q *Queries) GetWorkspaceAnyByName(ctx context.Context, name string) (Workspace, error) {
+	row := q.db.QueryRowContext(ctx, getWorkspaceAnyByName, name)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DefaultBranch,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const getWorkspaceByID = `-- name: GetWorkspaceByID :one
+SELECT id, name, default_branch, created_at, archived_at FROM workspaces WHERE id = ?
+`
+
+func (q *Queries) GetWorkspaceByID(ctx context.Context, id int64) (Workspace, error) {
+	row := q.db.QueryRowContext(ctx, getWorkspaceByID, id)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DefaultBranch,
+		&i.CreatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const getWorkspaceByName = `-- name: GetWorkspaceByName :one
-SELECT id, name, default_branch, created_at FROM workspaces WHERE name = ?
+SELECT id, name, default_branch, created_at, archived_at FROM workspaces WHERE name = ? AND archived_at IS NULL
 `
 
 func (q *Queries) GetWorkspaceByName(ctx context.Context, name string) (Workspace, error) {
@@ -148,6 +187,7 @@ func (q *Queries) GetWorkspaceByName(ctx context.Context, name string) (Workspac
 		&i.Name,
 		&i.DefaultBranch,
 		&i.CreatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -158,19 +198,26 @@ SET holder_replica_id = ?,
     generation = generation + 1,
     state = 'held',
     push_token = ?,
+    expires_at = ?,
     updated_at = datetime('now')
 WHERE id = ?
-RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at
+RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at, agent_state_digest, agent_state_size, agent_state_format, agent_session_id, agent_state_generation, expires_at, extras_digest, extras_size, extras_format, extras_generation
 `
 
 type GrantLeaseParams struct {
 	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
 	PushToken       sql.NullString `json:"push_token"`
+	ExpiresAt       sql.NullInt64  `json:"expires_at"`
 	ID              int64          `json:"id"`
 }
 
 func (q *Queries) GrantLease(ctx context.Context, arg GrantLeaseParams) (Lease, error) {
-	row := q.db.QueryRowContext(ctx, grantLease, arg.HolderReplicaID, arg.PushToken, arg.ID)
+	row := q.db.QueryRowContext(ctx, grantLease,
+		arg.HolderReplicaID,
+		arg.PushToken,
+		arg.ExpiresAt,
+		arg.ID,
+	)
 	var i Lease
 	err := row.Scan(
 		&i.ID,
@@ -183,12 +230,107 @@ func (q *Queries) GrantLease(ctx context.Context, arg GrantLeaseParams) (Lease, 
 		&i.BaseCommit,
 		&i.PushToken,
 		&i.UpdatedAt,
+		&i.AgentStateDigest,
+		&i.AgentStateSize,
+		&i.AgentStateFormat,
+		&i.AgentSessionID,
+		&i.AgentStateGeneration,
+		&i.ExpiresAt,
+		&i.ExtrasDigest,
+		&i.ExtrasSize,
+		&i.ExtrasFormat,
+		&i.ExtrasGeneration,
 	)
 	return i, err
 }
 
+const listActiveLeases = `-- name: ListActiveLeases :many
+SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, l.agent_state_digest, l.agent_state_size, l.agent_state_format, l.agent_session_id, l.agent_state_generation, l.expires_at, l.extras_digest, l.extras_size, l.extras_format, l.extras_generation, w.name AS workspace_name, r.name AS holder_name,
+       r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
+FROM leases l
+JOIN workspaces w ON w.id = l.workspace_id
+LEFT JOIN replicas r ON r.id = l.holder_replica_id
+WHERE w.archived_at IS NULL
+ORDER BY w.name, l.branch
+`
+
+type ListActiveLeasesRow struct {
+	ID                   int64          `json:"id"`
+	WorkspaceID          int64          `json:"workspace_id"`
+	Branch               string         `json:"branch"`
+	HolderReplicaID      sql.NullInt64  `json:"holder_replica_id"`
+	Generation           int64          `json:"generation"`
+	State                string         `json:"state"`
+	SnapshotCommit       sql.NullString `json:"snapshot_commit"`
+	BaseCommit           sql.NullString `json:"base_commit"`
+	PushToken            sql.NullString `json:"push_token"`
+	UpdatedAt            string         `json:"updated_at"`
+	AgentStateDigest     sql.NullString `json:"agent_state_digest"`
+	AgentStateSize       sql.NullInt64  `json:"agent_state_size"`
+	AgentStateFormat     sql.NullString `json:"agent_state_format"`
+	AgentSessionID       sql.NullString `json:"agent_session_id"`
+	AgentStateGeneration sql.NullInt64  `json:"agent_state_generation"`
+	ExpiresAt            sql.NullInt64  `json:"expires_at"`
+	ExtrasDigest         sql.NullString `json:"extras_digest"`
+	ExtrasSize           sql.NullInt64  `json:"extras_size"`
+	ExtrasFormat         sql.NullString `json:"extras_format"`
+	ExtrasGeneration     sql.NullInt64  `json:"extras_generation"`
+	WorkspaceName        string         `json:"workspace_name"`
+	HolderName           sql.NullString `json:"holder_name"`
+	HolderOpencodeUrl    sql.NullString `json:"holder_opencode_url"`
+	HolderWorkspacesDir  sql.NullString `json:"holder_workspaces_dir"`
+}
+
+func (q *Queries) ListActiveLeases(ctx context.Context) ([]ListActiveLeasesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveLeases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveLeasesRow
+	for rows.Next() {
+		var i ListActiveLeasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Branch,
+			&i.HolderReplicaID,
+			&i.Generation,
+			&i.State,
+			&i.SnapshotCommit,
+			&i.BaseCommit,
+			&i.PushToken,
+			&i.UpdatedAt,
+			&i.AgentStateDigest,
+			&i.AgentStateSize,
+			&i.AgentStateFormat,
+			&i.AgentSessionID,
+			&i.AgentStateGeneration,
+			&i.ExpiresAt,
+			&i.ExtrasDigest,
+			&i.ExtrasSize,
+			&i.ExtrasFormat,
+			&i.ExtrasGeneration,
+			&i.WorkspaceName,
+			&i.HolderName,
+			&i.HolderOpencodeUrl,
+			&i.HolderWorkspacesDir,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllLeases = `-- name: ListAllLeases :many
-SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name, r.name AS holder_name,
+SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, l.agent_state_digest, l.agent_state_size, l.agent_state_format, l.agent_session_id, l.agent_state_generation, l.expires_at, l.extras_digest, l.extras_size, l.extras_format, l.extras_generation, w.name AS workspace_name, r.name AS holder_name,
        r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
 FROM leases l
 JOIN workspaces w ON w.id = l.workspace_id
@@ -197,20 +339,30 @@ ORDER BY w.name, l.branch
 `
 
 type ListAllLeasesRow struct {
-	ID                  int64          `json:"id"`
-	WorkspaceID         int64          `json:"workspace_id"`
-	Branch              string         `json:"branch"`
-	HolderReplicaID     sql.NullInt64  `json:"holder_replica_id"`
-	Generation          int64          `json:"generation"`
-	State               string         `json:"state"`
-	SnapshotCommit      sql.NullString `json:"snapshot_commit"`
-	BaseCommit          sql.NullString `json:"base_commit"`
-	PushToken           sql.NullString `json:"push_token"`
-	UpdatedAt           string         `json:"updated_at"`
-	WorkspaceName       string         `json:"workspace_name"`
-	HolderName          sql.NullString `json:"holder_name"`
-	HolderOpencodeUrl   sql.NullString `json:"holder_opencode_url"`
-	HolderWorkspacesDir sql.NullString `json:"holder_workspaces_dir"`
+	ID                   int64          `json:"id"`
+	WorkspaceID          int64          `json:"workspace_id"`
+	Branch               string         `json:"branch"`
+	HolderReplicaID      sql.NullInt64  `json:"holder_replica_id"`
+	Generation           int64          `json:"generation"`
+	State                string         `json:"state"`
+	SnapshotCommit       sql.NullString `json:"snapshot_commit"`
+	BaseCommit           sql.NullString `json:"base_commit"`
+	PushToken            sql.NullString `json:"push_token"`
+	UpdatedAt            string         `json:"updated_at"`
+	AgentStateDigest     sql.NullString `json:"agent_state_digest"`
+	AgentStateSize       sql.NullInt64  `json:"agent_state_size"`
+	AgentStateFormat     sql.NullString `json:"agent_state_format"`
+	AgentSessionID       sql.NullString `json:"agent_session_id"`
+	AgentStateGeneration sql.NullInt64  `json:"agent_state_generation"`
+	ExpiresAt            sql.NullInt64  `json:"expires_at"`
+	ExtrasDigest         sql.NullString `json:"extras_digest"`
+	ExtrasSize           sql.NullInt64  `json:"extras_size"`
+	ExtrasFormat         sql.NullString `json:"extras_format"`
+	ExtrasGeneration     sql.NullInt64  `json:"extras_generation"`
+	WorkspaceName        string         `json:"workspace_name"`
+	HolderName           sql.NullString `json:"holder_name"`
+	HolderOpencodeUrl    sql.NullString `json:"holder_opencode_url"`
+	HolderWorkspacesDir  sql.NullString `json:"holder_workspaces_dir"`
 }
 
 func (q *Queries) ListAllLeases(ctx context.Context) ([]ListAllLeasesRow, error) {
@@ -233,6 +385,16 @@ func (q *Queries) ListAllLeases(ctx context.Context) ([]ListAllLeasesRow, error)
 			&i.BaseCommit,
 			&i.PushToken,
 			&i.UpdatedAt,
+			&i.AgentStateDigest,
+			&i.AgentStateSize,
+			&i.AgentStateFormat,
+			&i.AgentSessionID,
+			&i.AgentStateGeneration,
+			&i.ExpiresAt,
+			&i.ExtrasDigest,
+			&i.ExtrasSize,
+			&i.ExtrasFormat,
+			&i.ExtrasGeneration,
 			&i.WorkspaceName,
 			&i.HolderName,
 			&i.HolderOpencodeUrl,
@@ -251,8 +413,41 @@ func (q *Queries) ListAllLeases(ctx context.Context) ([]ListAllLeasesRow, error)
 	return items, nil
 }
 
+const listAllWorkspaces = `-- name: ListAllWorkspaces :many
+SELECT id, name, default_branch, created_at, archived_at FROM workspaces ORDER BY name
+`
+
+func (q *Queries) ListAllWorkspaces(ctx context.Context) ([]Workspace, error) {
+	rows, err := q.db.QueryContext(ctx, listAllWorkspaces)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workspace
+	for rows.Next() {
+		var i Workspace
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.DefaultBranch,
+			&i.CreatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLeasesByWorkspace = `-- name: ListLeasesByWorkspace :many
-SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, w.name AS workspace_name, r.name AS holder_name,
+SELECT l.id, l.workspace_id, l.branch, l.holder_replica_id, l.generation, l.state, l.snapshot_commit, l.base_commit, l.push_token, l.updated_at, l.agent_state_digest, l.agent_state_size, l.agent_state_format, l.agent_session_id, l.agent_state_generation, l.expires_at, l.extras_digest, l.extras_size, l.extras_format, l.extras_generation, w.name AS workspace_name, r.name AS holder_name,
        r.opencode_url AS holder_opencode_url, r.workspaces_dir AS holder_workspaces_dir
 FROM leases l
 JOIN workspaces w ON w.id = l.workspace_id
@@ -262,20 +457,30 @@ ORDER BY l.branch
 `
 
 type ListLeasesByWorkspaceRow struct {
-	ID                  int64          `json:"id"`
-	WorkspaceID         int64          `json:"workspace_id"`
-	Branch              string         `json:"branch"`
-	HolderReplicaID     sql.NullInt64  `json:"holder_replica_id"`
-	Generation          int64          `json:"generation"`
-	State               string         `json:"state"`
-	SnapshotCommit      sql.NullString `json:"snapshot_commit"`
-	BaseCommit          sql.NullString `json:"base_commit"`
-	PushToken           sql.NullString `json:"push_token"`
-	UpdatedAt           string         `json:"updated_at"`
-	WorkspaceName       string         `json:"workspace_name"`
-	HolderName          sql.NullString `json:"holder_name"`
-	HolderOpencodeUrl   sql.NullString `json:"holder_opencode_url"`
-	HolderWorkspacesDir sql.NullString `json:"holder_workspaces_dir"`
+	ID                   int64          `json:"id"`
+	WorkspaceID          int64          `json:"workspace_id"`
+	Branch               string         `json:"branch"`
+	HolderReplicaID      sql.NullInt64  `json:"holder_replica_id"`
+	Generation           int64          `json:"generation"`
+	State                string         `json:"state"`
+	SnapshotCommit       sql.NullString `json:"snapshot_commit"`
+	BaseCommit           sql.NullString `json:"base_commit"`
+	PushToken            sql.NullString `json:"push_token"`
+	UpdatedAt            string         `json:"updated_at"`
+	AgentStateDigest     sql.NullString `json:"agent_state_digest"`
+	AgentStateSize       sql.NullInt64  `json:"agent_state_size"`
+	AgentStateFormat     sql.NullString `json:"agent_state_format"`
+	AgentSessionID       sql.NullString `json:"agent_session_id"`
+	AgentStateGeneration sql.NullInt64  `json:"agent_state_generation"`
+	ExpiresAt            sql.NullInt64  `json:"expires_at"`
+	ExtrasDigest         sql.NullString `json:"extras_digest"`
+	ExtrasSize           sql.NullInt64  `json:"extras_size"`
+	ExtrasFormat         sql.NullString `json:"extras_format"`
+	ExtrasGeneration     sql.NullInt64  `json:"extras_generation"`
+	WorkspaceName        string         `json:"workspace_name"`
+	HolderName           sql.NullString `json:"holder_name"`
+	HolderOpencodeUrl    sql.NullString `json:"holder_opencode_url"`
+	HolderWorkspacesDir  sql.NullString `json:"holder_workspaces_dir"`
 }
 
 func (q *Queries) ListLeasesByWorkspace(ctx context.Context, workspaceID int64) ([]ListLeasesByWorkspaceRow, error) {
@@ -298,6 +503,16 @@ func (q *Queries) ListLeasesByWorkspace(ctx context.Context, workspaceID int64) 
 			&i.BaseCommit,
 			&i.PushToken,
 			&i.UpdatedAt,
+			&i.AgentStateDigest,
+			&i.AgentStateSize,
+			&i.AgentStateFormat,
+			&i.AgentSessionID,
+			&i.AgentStateGeneration,
+			&i.ExpiresAt,
+			&i.ExtrasDigest,
+			&i.ExtrasSize,
+			&i.ExtrasFormat,
+			&i.ExtrasGeneration,
 			&i.WorkspaceName,
 			&i.HolderName,
 			&i.HolderOpencodeUrl,
@@ -351,7 +566,7 @@ func (q *Queries) ListReplicas(ctx context.Context) ([]Replica, error) {
 }
 
 const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT id, name, default_branch, created_at FROM workspaces ORDER BY name
+SELECT id, name, default_branch, created_at, archived_at FROM workspaces WHERE archived_at IS NULL ORDER BY name
 `
 
 func (q *Queries) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
@@ -368,6 +583,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 			&i.Name,
 			&i.DefaultBranch,
 			&i.CreatedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -388,19 +604,51 @@ SET state = 'released',
     push_token = NULL,
     snapshot_commit = ?,
     base_commit = ?,
+    agent_state_digest = ?,
+    agent_state_size = ?,
+    agent_state_format = ?,
+    agent_session_id = ?,
+    agent_state_generation = ?,
+    extras_digest = ?,
+    extras_size = ?,
+    extras_format = ?,
+    extras_generation = ?,
+    expires_at = NULL,
     updated_at = datetime('now')
 WHERE id = ?
-RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at
+RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at, agent_state_digest, agent_state_size, agent_state_format, agent_session_id, agent_state_generation, expires_at, extras_digest, extras_size, extras_format, extras_generation
 `
 
 type ReleaseLeaseParams struct {
-	SnapshotCommit sql.NullString `json:"snapshot_commit"`
-	BaseCommit     sql.NullString `json:"base_commit"`
-	ID             int64          `json:"id"`
+	SnapshotCommit       sql.NullString `json:"snapshot_commit"`
+	BaseCommit           sql.NullString `json:"base_commit"`
+	AgentStateDigest     sql.NullString `json:"agent_state_digest"`
+	AgentStateSize       sql.NullInt64  `json:"agent_state_size"`
+	AgentStateFormat     sql.NullString `json:"agent_state_format"`
+	AgentSessionID       sql.NullString `json:"agent_session_id"`
+	AgentStateGeneration sql.NullInt64  `json:"agent_state_generation"`
+	ExtrasDigest         sql.NullString `json:"extras_digest"`
+	ExtrasSize           sql.NullInt64  `json:"extras_size"`
+	ExtrasFormat         sql.NullString `json:"extras_format"`
+	ExtrasGeneration     sql.NullInt64  `json:"extras_generation"`
+	ID                   int64          `json:"id"`
 }
 
 func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) (Lease, error) {
-	row := q.db.QueryRowContext(ctx, releaseLease, arg.SnapshotCommit, arg.BaseCommit, arg.ID)
+	row := q.db.QueryRowContext(ctx, releaseLease,
+		arg.SnapshotCommit,
+		arg.BaseCommit,
+		arg.AgentStateDigest,
+		arg.AgentStateSize,
+		arg.AgentStateFormat,
+		arg.AgentSessionID,
+		arg.AgentStateGeneration,
+		arg.ExtrasDigest,
+		arg.ExtrasSize,
+		arg.ExtrasFormat,
+		arg.ExtrasGeneration,
+		arg.ID,
+	)
 	var i Lease
 	err := row.Scan(
 		&i.ID,
@@ -413,6 +661,132 @@ func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) (Lea
 		&i.BaseCommit,
 		&i.PushToken,
 		&i.UpdatedAt,
+		&i.AgentStateDigest,
+		&i.AgentStateSize,
+		&i.AgentStateFormat,
+		&i.AgentSessionID,
+		&i.AgentStateGeneration,
+		&i.ExpiresAt,
+		&i.ExtrasDigest,
+		&i.ExtrasSize,
+		&i.ExtrasFormat,
+		&i.ExtrasGeneration,
+	)
+	return i, err
+}
+
+const renewLease = `-- name: RenewLease :one
+UPDATE leases
+SET expires_at = ?1
+WHERE id = ?2
+  AND holder_replica_id = ?3
+  AND generation = ?4
+  AND push_token = ?5
+  AND state = 'held'
+  AND (expires_at IS NULL OR expires_at > ?6)
+RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at, agent_state_digest, agent_state_size, agent_state_format, agent_session_id, agent_state_generation, expires_at, extras_digest, extras_size, extras_format, extras_generation
+`
+
+type RenewLeaseParams struct {
+	NewExpiresAt    sql.NullInt64  `json:"new_expires_at"`
+	ID              int64          `json:"id"`
+	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
+	Generation      int64          `json:"generation"`
+	PushToken       sql.NullString `json:"push_token"`
+	Now             sql.NullInt64  `json:"now"`
+}
+
+func (q *Queries) RenewLease(ctx context.Context, arg RenewLeaseParams) (Lease, error) {
+	row := q.db.QueryRowContext(ctx, renewLease,
+		arg.NewExpiresAt,
+		arg.ID,
+		arg.HolderReplicaID,
+		arg.Generation,
+		arg.PushToken,
+		arg.Now,
+	)
+	var i Lease
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Branch,
+		&i.HolderReplicaID,
+		&i.Generation,
+		&i.State,
+		&i.SnapshotCommit,
+		&i.BaseCommit,
+		&i.PushToken,
+		&i.UpdatedAt,
+		&i.AgentStateDigest,
+		&i.AgentStateSize,
+		&i.AgentStateFormat,
+		&i.AgentSessionID,
+		&i.AgentStateGeneration,
+		&i.ExpiresAt,
+		&i.ExtrasDigest,
+		&i.ExtrasSize,
+		&i.ExtrasFormat,
+		&i.ExtrasGeneration,
+	)
+	return i, err
+}
+
+const renewLeaseByPushToken = `-- name: RenewLeaseByPushToken :one
+UPDATE leases
+SET expires_at = ?1
+WHERE push_token = ?2
+  AND state = 'held'
+  AND (expires_at IS NULL OR expires_at > ?3)
+RETURNING id, workspace_id, branch, holder_replica_id, generation, state, snapshot_commit, base_commit, push_token, updated_at, agent_state_digest, agent_state_size, agent_state_format, agent_session_id, agent_state_generation, expires_at, extras_digest, extras_size, extras_format, extras_generation
+`
+
+type RenewLeaseByPushTokenParams struct {
+	NewExpiresAt sql.NullInt64  `json:"new_expires_at"`
+	PushToken    sql.NullString `json:"push_token"`
+	Now          sql.NullInt64  `json:"now"`
+}
+
+func (q *Queries) RenewLeaseByPushToken(ctx context.Context, arg RenewLeaseByPushTokenParams) (Lease, error) {
+	row := q.db.QueryRowContext(ctx, renewLeaseByPushToken, arg.NewExpiresAt, arg.PushToken, arg.Now)
+	var i Lease
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Branch,
+		&i.HolderReplicaID,
+		&i.Generation,
+		&i.State,
+		&i.SnapshotCommit,
+		&i.BaseCommit,
+		&i.PushToken,
+		&i.UpdatedAt,
+		&i.AgentStateDigest,
+		&i.AgentStateSize,
+		&i.AgentStateFormat,
+		&i.AgentSessionID,
+		&i.AgentStateGeneration,
+		&i.ExpiresAt,
+		&i.ExtrasDigest,
+		&i.ExtrasSize,
+		&i.ExtrasFormat,
+		&i.ExtrasGeneration,
+	)
+	return i, err
+}
+
+const restoreWorkspace = `-- name: RestoreWorkspace :one
+UPDATE workspaces SET archived_at = NULL WHERE id = ? RETURNING id, name, default_branch, created_at, archived_at
+`
+
+func (q *Queries) RestoreWorkspace(ctx context.Context, id int64) (Workspace, error) {
+	row := q.db.QueryRowContext(ctx, restoreWorkspace, id)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DefaultBranch,
+		&i.CreatedAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }

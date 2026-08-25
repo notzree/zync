@@ -52,10 +52,13 @@ var Module = fx.Options(
 		NewConfig,
 		NewDB,
 		NewGitManager,
+		NewBlobStore,
 		NewLeaseService,
 		NewGitHandler,
 		NewMux,
 		NewHTTPServer,
+		NewMaintenance,
 	),
 	fx.Invoke(func(*http.Server) {}),
+	fx.Invoke(func(*Maintenance) {}),
 )

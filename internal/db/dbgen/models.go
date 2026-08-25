@@ -9,16 +9,26 @@ import (
 )
 
 type Lease struct {
-	ID              int64          `json:"id"`
-	WorkspaceID     int64          `json:"workspace_id"`
-	Branch          string         `json:"branch"`
-	HolderReplicaID sql.NullInt64  `json:"holder_replica_id"`
-	Generation      int64          `json:"generation"`
-	State           string         `json:"state"`
-	SnapshotCommit  sql.NullString `json:"snapshot_commit"`
-	BaseCommit      sql.NullString `json:"base_commit"`
-	PushToken       sql.NullString `json:"push_token"`
-	UpdatedAt       string         `json:"updated_at"`
+	ID                   int64          `json:"id"`
+	WorkspaceID          int64          `json:"workspace_id"`
+	Branch               string         `json:"branch"`
+	HolderReplicaID      sql.NullInt64  `json:"holder_replica_id"`
+	Generation           int64          `json:"generation"`
+	State                string         `json:"state"`
+	SnapshotCommit       sql.NullString `json:"snapshot_commit"`
+	BaseCommit           sql.NullString `json:"base_commit"`
+	PushToken            sql.NullString `json:"push_token"`
+	UpdatedAt            string         `json:"updated_at"`
+	AgentStateDigest     sql.NullString `json:"agent_state_digest"`
+	AgentStateSize       sql.NullInt64  `json:"agent_state_size"`
+	AgentStateFormat     sql.NullString `json:"agent_state_format"`
+	AgentSessionID       sql.NullString `json:"agent_session_id"`
+	AgentStateGeneration sql.NullInt64  `json:"agent_state_generation"`
+	ExpiresAt            sql.NullInt64  `json:"expires_at"`
+	ExtrasDigest         sql.NullString `json:"extras_digest"`
+	ExtrasSize           sql.NullInt64  `json:"extras_size"`
+	ExtrasFormat         sql.NullString `json:"extras_format"`
+	ExtrasGeneration     sql.NullInt64  `json:"extras_generation"`
 }
 
 type Replica struct {
@@ -31,8 +41,9 @@ type Replica struct {
 }
 
 type Workspace struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	DefaultBranch string `json:"default_branch"`
-	CreatedAt     string `json:"created_at"`
+	ID            int64         `json:"id"`
+	Name          string        `json:"name"`
+	DefaultBranch string        `json:"default_branch"`
+	CreatedAt     string        `json:"created_at"`
+	ArchivedAt    sql.NullInt64 `json:"archived_at"`
 }

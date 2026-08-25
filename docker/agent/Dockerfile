@@ -10,13 +10,14 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/zync ./cmd/zync \
  && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/zx ./cmd/zx
 
 FROM debian:bookworm-slim
+ARG OPENCODE_VERSION=1.18.22
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl ca-certificates unzip ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
 # opencode ships a self-contained binary; the install script drops it in
 # $HOME/.opencode/bin, but /root is volume-mounted at runtime, so relocate it.
-RUN curl -fsSL https://opencode.ai/install | bash \
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "$OPENCODE_VERSION" --no-modify-path \
  && mv /root/.opencode/bin/opencode /usr/local/bin/opencode \
  && rm -rf /root/.opencode
 

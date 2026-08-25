@@ -120,6 +120,13 @@ func (r *Repo) WorktreeTree() (string, error) {
 	return tree, err
 }
 
+// IndexTree returns the tree represented by the user's real Git index without
+// modifying it. Git rejects write-tree when the index contains unmerged paths,
+// so conflicted states fail the handoff rather than being flattened.
+func (r *Repo) IndexTree() (string, error) {
+	return r.run(identEnv, "write-tree")
+}
+
 func (r *Repo) writeWorktreeTree() (tree string, cleanup func(), err error) {
 	tmp, err := os.CreateTemp(r.GitDir, "zync-index-*")
 	if err != nil {
@@ -146,27 +153,50 @@ func (r *Repo) writeWorktreeTree() (tree string, cleanup func(), err error) {
 	return tree, cleanup, nil
 }
 
-// Snapshot commits the full working state as a child of HEAD and points the
-// branch's snapshot ref at it. Returns the snapshot commit and its tree.
-func (r *Repo) Snapshot(branch string) (commit, tree string, err error) {
+// Snapshot records both the full working tree and the real index. The index is
+// encoded as a second-parent metadata commit so the existing snapshot ref
+// transports both trees without another ref or protocol field.
+func (r *Repo) Snapshot(branch string) (commit, tree, indexTree string, err error) {
 	tree, cleanup, err := r.writeWorktreeTree()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer cleanup()
 
 	head, err := r.RevParse("HEAD")
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	commit, err = r.run(identEnv, "commit-tree", tree, "-p", head, "-m", "zync snapshot of "+branch)
+	indexTree, err = r.IndexTree()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+	indexCommit, err := r.run(identEnv, "commit-tree", indexTree, "-p", head, "-m", "zync index of "+branch)
+	if err != nil {
+		return "", "", "", err
+	}
+	commit, err = r.run(identEnv, "commit-tree", tree, "-p", head, "-p", indexCommit, "-m", "zync snapshot v2 of "+branch)
+	if err != nil {
+		return "", "", "", err
 	}
 	if _, err := r.Run("update-ref", SnapshotRefPrefix+branch, commit); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return commit, tree, nil
+	return commit, tree, indexTree, nil
+}
+
+// SnapshotIndexTree returns the index tree encoded by a v2 snapshot. Legacy
+// one-parent snapshots return an empty tree and use the mixed-reset fallback.
+func (r *Repo) SnapshotIndexTree(snapshotCommit string) (string, error) {
+	line, err := r.Run("rev-list", "--parents", "-n", "1", snapshotCommit)
+	if err != nil {
+		return "", err
+	}
+	parents := strings.Fields(line)
+	if len(parents) < 3 {
+		return "", nil
+	}
+	return r.TreeOf(parents[2])
 }
 
 // FetchBranch fetches the branch head and its snapshot ref from the hub.
@@ -196,7 +226,7 @@ func (r *Repo) PushBranch(branch, pushToken string, withSnapshot bool) error {
 // normCommit must be a commit whose tree equals the current working state
 // (the caller verifies this beforehand); it lets git track every current file
 // so that files deleted between the two states are removed cleanly.
-func (r *Repo) Restore(branch, normCommit, snapshotCommit, baseCommit string) error {
+func (r *Repo) Restore(branch, normCommit, snapshotCommit, baseCommit, indexTree string) error {
 	// Detach so no branch ref moves during normalization.
 	if _, err := r.Run("checkout", "-f", "--detach", normCommit); err != nil {
 		return err
@@ -212,8 +242,12 @@ func (r *Repo) Restore(branch, normCommit, snapshotCommit, baseCommit string) er
 	if _, err := r.Run("symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
 		return err
 	}
-	// Index back to the branch head: snapshot changes now show as uncommitted.
-	if _, err := r.Run("reset", "--mixed", baseCommit); err != nil {
+	if indexTree == "" {
+		// Legacy snapshots flattened the index into unstaged changes.
+		if _, err := r.Run("reset", "--mixed", baseCommit); err != nil {
+			return err
+		}
+	} else if _, err := r.Run("read-tree", indexTree); err != nil {
 		return err
 	}
 	return nil

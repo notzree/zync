@@ -47,6 +47,12 @@ spec:
                 secretKeyRef:
                   name: zync-hub
                   key: token
+            - name: ZYNC_GIT_GC_INTERVAL
+              value: "24h"
+            - name: ZYNC_GIT_GC_PRUNE_AGE
+              value: "336h"
+            - name: ZYNC_LEASE_TTL
+              value: "2m"
           volumeMounts:
             - name: data
               mountPath: /data

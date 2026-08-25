@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cgi"
 	"os/exec"
+	"strconv"
 
 	"github.com/notzree/zync/internal/protocol"
 )
@@ -78,12 +79,34 @@ func NewMux(cfg Config, svc *LeaseService, git http.Handler) *http.ServeMux {
 	})
 
 	mux.HandleFunc("GET /api/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		out, err := svc.ListWorkspaces(r.Context())
+		var out []protocol.WorkspaceInfo
+		var err error
+		if r.URL.Query().Get("include_archived") == "1" {
+			out, err = svc.ListAllWorkspaces(r.Context())
+		} else {
+			out, err = svc.ListWorkspaces(r.Context())
+		}
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, out)
+	})
+
+	mux.HandleFunc("POST /api/workspaces/{ws}/archive", func(w http.ResponseWriter, r *http.Request) {
+		if err := svc.ArchiveWorkspace(r.Context(), r.PathValue("ws")); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"archived": true})
+	})
+
+	mux.HandleFunc("POST /api/workspaces/{ws}/restore", func(w http.ResponseWriter, r *http.Request) {
+		if err := svc.RestoreWorkspace(r.Context(), r.PathValue("ws")); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"restored": true})
 	})
 
 	mux.HandleFunc("GET /api/workspaces/{ws}", func(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +163,74 @@ func NewMux(cfg Config, svc *LeaseService, git http.Handler) *http.ServeMux {
 		}
 		slog.Info("lease released", "workspace", r.PathValue("ws"), "branch", req.Branch, "replica", replica(r), "generation", req.Generation)
 		writeJSON(w, http.StatusOK, map[string]bool{"released": true})
+	})
+
+	mux.HandleFunc("POST /api/workspaces/{ws}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		var req protocol.HeartbeatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, fmt.Errorf("%w: invalid json body", ErrConflict))
+			return
+		}
+		resp, err := svc.Heartbeat(r.Context(), r.PathValue("ws"), replica(r), req)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+	})
+
+	mux.HandleFunc("PUT /api/workspaces/{ws}/agent-state/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		generation, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
+		if err != nil || r.ContentLength < 0 {
+			writeErr(w, fmt.Errorf("%w: generation and Content-Length are required", ErrConflict))
+			return
+		}
+		if err := svc.UploadAgentState(r.Context(), r.PathValue("ws"), r.URL.Query().Get("branch"), replica(r), generation, r.PathValue("digest"), r.ContentLength, r.Body); err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /api/workspaces/{ws}/agent-state/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		f, size, err := svc.OpenAgentState(r.Context(), r.PathValue("ws"), r.URL.Query().Get("branch"), r.PathValue("digest"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		if _, err := io.Copy(w, f); err != nil {
+			slog.Warn("agent-state download interrupted", "digest", r.PathValue("digest"), "error", err)
+		}
+	})
+
+	mux.HandleFunc("PUT /api/workspaces/{ws}/extras/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		generation, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
+		if err != nil || r.ContentLength < 0 {
+			writeErr(w, fmt.Errorf("%w: generation and Content-Length are required", ErrConflict))
+			return
+		}
+		if err := svc.UploadExtras(r.Context(), r.PathValue("ws"), r.URL.Query().Get("branch"), replica(r), generation, r.PathValue("digest"), r.ContentLength, r.Body); err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /api/workspaces/{ws}/extras/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		f, size, err := svc.OpenExtras(r.Context(), r.PathValue("ws"), r.URL.Query().Get("branch"), r.PathValue("digest"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		if _, err := io.Copy(w, f); err != nil {
+			slog.Warn("encrypted extras download interrupted", "digest", r.PathValue("digest"), "error", err)
+		}
 	})
 
 	mux.HandleFunc("POST /internal/validate-push", func(w http.ResponseWriter, r *http.Request) {

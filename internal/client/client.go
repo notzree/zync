@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -57,14 +58,7 @@ func (c *Client) do(method, path string, body, out any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set(protocol.ReplicaHeader, c.replica)
-	if c.opencodeURL != "" {
-		req.Header.Set(protocol.OpencodeURLHeader, c.opencodeURL)
-	}
-	if c.workspacesDir != "" {
-		req.Header.Set(protocol.WorkspacesDirHeader, c.workspacesDir)
-	}
+	c.setHeaders(req)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -74,20 +68,8 @@ func (c *Client) do(method, path string, body, out any) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		var apiErr protocol.ErrorResponse
-		msg := resp.Status
-		if json.NewDecoder(resp.Body).Decode(&apiErr) == nil && apiErr.Error != "" {
-			msg = apiErr.Error
-		}
-		switch resp.StatusCode {
-		case http.StatusConflict:
-			return fmt.Errorf("%w: %s", ErrConflict, msg)
-		case http.StatusNotFound:
-			return fmt.Errorf("%w: %s", ErrNotFound, msg)
-		default:
-			return errors.New(msg)
-		}
+	if err := responseError(resp); err != nil {
+		return err
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
@@ -107,10 +89,24 @@ func (c *Client) ListWorkspaces() ([]protocol.WorkspaceInfo, error) {
 	return out, err
 }
 
+func (c *Client) ListAllWorkspaces() ([]protocol.WorkspaceInfo, error) {
+	var out []protocol.WorkspaceInfo
+	err := c.do("GET", "/api/workspaces?include_archived=1", nil, &out)
+	return out, err
+}
+
 func (c *Client) GetWorkspace(name string) (protocol.WorkspaceInfo, error) {
 	var out protocol.WorkspaceInfo
 	err := c.do("GET", "/api/workspaces/"+name, nil, &out)
 	return out, err
+}
+
+func (c *Client) ArchiveWorkspace(name string) error {
+	return c.do("POST", "/api/workspaces/"+url.PathEscape(name)+"/archive", nil, nil)
+}
+
+func (c *Client) RestoreWorkspace(name string) error {
+	return c.do("POST", "/api/workspaces/"+url.PathEscape(name)+"/restore", nil, nil)
 }
 
 func (c *Client) ListReplicas() ([]protocol.ReplicaInfo, error) {
@@ -133,6 +129,132 @@ func (c *Client) Take(workspace, branch string, force bool) (protocol.TakeRespon
 
 func (c *Client) Release(workspace string, req protocol.ReleaseRequest) error {
 	return c.do("POST", "/api/workspaces/"+workspace+"/release", req, nil)
+}
+
+func (c *Client) Heartbeat(workspace string, req protocol.HeartbeatRequest) (protocol.HeartbeatResponse, error) {
+	var out protocol.HeartbeatResponse
+	err := c.do("POST", "/api/workspaces/"+workspace+"/heartbeat", req, &out)
+	return out, err
+}
+
+func (c *Client) UploadAgentState(workspace, branch string, generation int64, bundle protocol.AgentStateBundle, data []byte) error {
+	path := "/api/workspaces/" + url.PathEscape(workspace) + "/agent-state/" + bundle.Digest +
+		"?branch=" + url.QueryEscape(branch) + "&generation=" + fmt.Sprint(generation)
+	req, err := http.NewRequest(http.MethodPut, c.hubURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("hub unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	return responseError(resp)
+}
+
+func (c *Client) DownloadAgentState(workspace, branch string, bundle protocol.AgentStateBundle) ([]byte, error) {
+	if bundle.Size < 0 || bundle.Size > protocol.MaxAgentStateBytes {
+		return nil, errors.New("invalid agent-state bundle size")
+	}
+	path := "/api/workspaces/" + url.PathEscape(workspace) + "/agent-state/" + bundle.Digest +
+		"?branch=" + url.QueryEscape(branch)
+	req, err := http.NewRequest(http.MethodGet, c.hubURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("hub unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := responseError(resp); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, bundle.Size+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != bundle.Size {
+		return nil, errors.New("agent-state download size mismatch")
+	}
+	return data, nil
+}
+
+func (c *Client) UploadExtras(workspace, branch string, generation int64, bundle protocol.ExtrasBundle, data []byte) error {
+	path := "/api/workspaces/" + url.PathEscape(workspace) + "/extras/" + bundle.Digest +
+		"?branch=" + url.QueryEscape(branch) + "&generation=" + fmt.Sprint(generation)
+	req, err := http.NewRequest(http.MethodPut, c.hubURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("hub unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	return responseError(resp)
+}
+
+func (c *Client) DownloadExtras(workspace, branch string, bundle protocol.ExtrasBundle) ([]byte, error) {
+	if bundle.Size < 0 || bundle.Size > protocol.MaxExtrasBytes {
+		return nil, errors.New("invalid encrypted extras bundle size")
+	}
+	path := "/api/workspaces/" + url.PathEscape(workspace) + "/extras/" + bundle.Digest +
+		"?branch=" + url.QueryEscape(branch)
+	req, err := http.NewRequest(http.MethodGet, c.hubURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("hub unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := responseError(resp); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, bundle.Size+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != bundle.Size {
+		return nil, errors.New("encrypted extras download size mismatch")
+	}
+	return data, nil
+}
+
+func (c *Client) setHeaders(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set(protocol.ReplicaHeader, c.replica)
+	if c.opencodeURL != "" {
+		req.Header.Set(protocol.OpencodeURLHeader, c.opencodeURL)
+	}
+	if c.workspacesDir != "" {
+		req.Header.Set(protocol.WorkspacesDirHeader, c.workspacesDir)
+	}
+}
+
+func responseError(resp *http.Response) error {
+	if resp.StatusCode < 400 {
+		return nil
+	}
+	var apiErr protocol.ErrorResponse
+	msg := resp.Status
+	if json.NewDecoder(resp.Body).Decode(&apiErr) == nil && apiErr.Error != "" {
+		msg = apiErr.Error
+	}
+	switch resp.StatusCode {
+	case http.StatusConflict:
+		return fmt.Errorf("%w: %s", ErrConflict, msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("%w: %s", ErrNotFound, msg)
+	default:
+		return errors.New(msg)
+	}
 }
 
 func (c *Client) Replica() string { return c.replica }

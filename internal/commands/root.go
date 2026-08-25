@@ -3,10 +3,12 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"text/tabwriter"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -40,6 +42,72 @@ func NewRoot() *cli.Command {
 		Name:  name,
 		Usage: "git-based codebase handoffs between your machines and your homeserver",
 		Commands: []*cli.Command{
+			{
+				Name:  "workspace",
+				Usage: "manage workspace lifecycle",
+				Commands: []*cli.Command{
+					{
+						Name:      "archive",
+						Usage:     "hide a workspace from active use without deleting data",
+						ArgsUsage: "<workspace>",
+						Action: func(ctx context.Context, c *cli.Command) error {
+							if c.Args().Len() != 1 {
+								return errors.New("usage: zync workspace archive <workspace>")
+							}
+							o, err := newOps()
+							if err != nil {
+								return err
+							}
+							if err := o.Client.ArchiveWorkspace(c.Args().First()); err != nil {
+								return err
+							}
+							fmt.Printf("workspace %q archived\n", c.Args().First())
+							return nil
+						},
+					},
+					{
+						Name:      "restore",
+						Usage:     "restore an archived workspace",
+						ArgsUsage: "<workspace>",
+						Action: func(ctx context.Context, c *cli.Command) error {
+							if c.Args().Len() != 1 {
+								return errors.New("usage: zync workspace restore <workspace>")
+							}
+							o, err := newOps()
+							if err != nil {
+								return err
+							}
+							if err := o.Client.RestoreWorkspace(c.Args().First()); err != nil {
+								return err
+							}
+							fmt.Printf("workspace %q restored\n", c.Args().First())
+							return nil
+						},
+					},
+					{
+						Name:  "list",
+						Usage: "list active and archived workspaces",
+						Action: func(ctx context.Context, c *cli.Command) error {
+							o, err := newOps()
+							if err != nil {
+								return err
+							}
+							workspaces, err := o.Client.ListAllWorkspaces()
+							if err != nil {
+								return err
+							}
+							for _, ws := range workspaces {
+								state := "active"
+								if ws.ArchivedAt != 0 {
+									state = "archived"
+								}
+								fmt.Printf("%s\t%s\n", ws.Name, state)
+							}
+							return nil
+						},
+					},
+				},
+			},
 			{
 				Name:  "setup",
 				Usage: "configure this replica (hub URL, token, replica name)",
@@ -111,6 +179,9 @@ func NewRoot() *cli.Command {
 					if err := o.Take(cwd(), c.Args().Get(0), c.Bool("force")); err != nil {
 						return err
 					}
+					if sessionID, err := o.AgentSession(cwd(), c.Args().Get(0)); err == nil && sessionID != "" {
+						fmt.Printf("agent session restored: %s\n", sessionID)
+					}
 					fmt.Println("lease acquired; this replica is now mutable")
 					return nil
 				},
@@ -119,16 +190,60 @@ func NewRoot() *cli.Command {
 				Name:      "release",
 				Usage:     "flush the full working state and release the lease back to the hub",
 				ArgsUsage: "[branch]",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "agent-session", Usage: "export and attach this OpenCode session to the snapshot"},
+				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					o, err := newOps()
 					if err != nil {
 						return err
 					}
-					if err := o.Release(cwd(), c.Args().Get(0)); err != nil {
+					if sessionID := c.String("agent-session"); sessionID != "" {
+						err = o.ReleaseWithAgentSession(cwd(), c.Args().Get(0), sessionID)
+					} else {
+						err = o.Release(cwd(), c.Args().Get(0))
+					}
+					if err != nil {
 						return err
 					}
 					fmt.Println("released; the lease is free and this replica is read-only for that branch")
 					return nil
+				},
+			},
+			{
+				Name:      "heartbeat",
+				Usage:     "renew the lease held by this checkout",
+				ArgsUsage: "[branch]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "watch", Usage: "keep renewing until interrupted"},
+					&cli.DurationFlag{Name: "interval", Usage: "watch interval (default: hub recommendation)"},
+				},
+				Action: func(ctx context.Context, c *cli.Command) error {
+					o, err := newOps()
+					if err != nil {
+						return err
+					}
+					for {
+						recommended, err := o.Heartbeat(cwd(), c.Args().Get(0))
+						if err != nil {
+							return err
+						}
+						if !c.Bool("watch") {
+							fmt.Println("lease heartbeat renewed")
+							return nil
+						}
+						interval := c.Duration("interval")
+						if interval <= 0 {
+							interval = recommended
+						}
+						timer := time.NewTimer(interval)
+						select {
+						case <-ctx.Done():
+							timer.Stop()
+							return nil
+						case <-timer.C:
+						}
+					}
 				},
 			},
 			{
@@ -137,13 +252,19 @@ func NewRoot() *cli.Command {
 				ArgsUsage: "[branch]",
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "to", Usage: "target replica (default: the only other replica running an opencode server)"},
+					&cli.StringFlag{Name: "agent-session", Usage: "export and attach this OpenCode session to the snapshot"},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					o, err := newOps()
 					if err != nil {
 						return err
 					}
-					target, err := o.Handoff(cwd(), c.Args().Get(0), c.String("to"))
+					var target string
+					if sessionID := c.String("agent-session"); sessionID != "" {
+						target, err = o.HandoffWithAgentSession(cwd(), c.Args().Get(0), c.String("to"), sessionID)
+					} else {
+						target, err = o.Handoff(cwd(), c.Args().Get(0), c.String("to"))
+					}
 					if err != nil {
 						return err
 					}
@@ -166,6 +287,24 @@ func NewRoot() *cli.Command {
 					for _, ws := range wss {
 						fmt.Println(ws.Name)
 					}
+					return nil
+				},
+			},
+			{
+				Name:  "sync-workspaces",
+				Usage: "materialize newly enrolled workspaces under a managed root",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "root", Usage: "managed workspace root", Required: true},
+				},
+				Action: func(ctx context.Context, c *cli.Command) error {
+					o, err := newOps()
+					if err != nil {
+						return err
+					}
+					if err := o.SyncWorkspaces(c.String("root")); err != nil {
+						return err
+					}
+					fmt.Println("workspace reconciliation complete")
 					return nil
 				},
 			},

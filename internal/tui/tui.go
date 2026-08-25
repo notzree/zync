@@ -119,9 +119,13 @@ func (m model) openCommand(lease protocol.LeaseInfo) (*exec.Cmd, string, error) 
 		return exec.Command(argv[0], argv[1:]...), strings.Join(argv, " ")
 	}
 	local := func(dir string) (*exec.Cmd, string) {
-		cmd := exec.Command("opencode")
+		args := []string{}
+		if sessionID, err := m.o.AgentSession(dir, lease.Branch); err == nil && sessionID != "" {
+			args = append(args, "--session", sessionID)
+		}
+		cmd := exec.Command("opencode", args...)
 		cmd.Dir = dir
-		return cmd, "cd " + dir + " && opencode"
+		return cmd, "cd " + dir + " && opencode " + strings.Join(args, " ")
 	}
 	localDir, hasLocal := m.registry[lease.Workspace]
 

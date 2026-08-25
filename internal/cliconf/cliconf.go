@@ -75,17 +75,22 @@ func SaveGlobal(g Global) error {
 // branch B with the content of snapshot Commit (tree Tree). Any deviation
 // while not holding the lease is divergence.
 type WorktreeState struct {
-	Branch string `json:"branch"`
-	Tree   string `json:"tree"`
-	Commit string `json:"commit"`
+	Branch    string `json:"branch"`
+	Tree      string `json:"tree"`
+	IndexTree string `json:"index_tree,omitempty"`
+	Commit    string `json:"commit"`
 }
 
 type BranchState struct {
-	Holding        bool   `json:"holding"`
-	Generation     int64  `json:"generation"`
-	PushToken      string `json:"push_token,omitempty"`
-	SnapshotCommit string `json:"snapshot_commit,omitempty"`
-	BaseCommit     string `json:"base_commit,omitempty"`
+	Holding          bool   `json:"holding"`
+	Generation       int64  `json:"generation"`
+	PushToken        string `json:"push_token,omitempty"`
+	SnapshotCommit   string `json:"snapshot_commit,omitempty"`
+	BaseCommit       string `json:"base_commit,omitempty"`
+	AgentStateDigest string `json:"agent_state_digest,omitempty"`
+	AgentSessionID   string `json:"agent_session_id,omitempty"`
+	ExtrasDigest     string `json:"extras_digest,omitempty"`
+	ExpiresAt        int64  `json:"expires_at,omitempty"`
 }
 
 type RepoState struct {
